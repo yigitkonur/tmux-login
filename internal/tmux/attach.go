@@ -16,47 +16,48 @@ type AttachSpec struct {
 	Detach bool
 }
 
-// Attach implements the canonical idempotent attach idiom:
+// Attach is the idempotent create-or-attach entry point.
 //
-//	tmux new-session -A -d -s NAME -c DIR        (idempotent: creates if absent)
-//	tmux switch-client -t =NAME                  (if $TMUX is set)
-//	tmux attach -t =NAME                         (if not inside tmux; via execve)
+//	if !has-session NAME:
+//	    tmux new-session -d -s NAME -c DIR        (fresh detached create)
+//	    tmux send-keys -t =NAME:. 'cd DIR && clear' Enter   (lock cwd against
+//	                                                         shell-startup drift)
+//	if InsideTmux:
+//	    tmux switch-client -t =NAME               (in-place client switch)
+//	else:
+//	    syscall.Exec tmux attach -t =NAME         (replace ourselves with the
+//	                                                client; user's shell becomes
+//	                                                the tmux client)
 //
-// `-A` makes new-session attach to an existing session of the same name
-// instead of erroring. `-d` keeps it detached so we can branch deterministically
-// into either switch-client or attach. The `=NAME` target syntax disables
-// fnmatch wildcards, so a session named e.g. `foo*` doesn't accidentally match.
+// We deliberately do NOT use `tmux new-session -A -d`. On tmux 3.4-3.6a the
+// `-A` flag makes tmux switch into attach behavior when the session already
+// exists, ignoring `-d` and trying to open a tty. In login contexts where
+// stdin isn't a real tty (cmux's broken-ssh-multiplexing fallback, scripted
+// invocation, captive subshells), tmux dies with `open terminal failed:
+// not a terminal` and the whole attach fails. Splitting the branch around
+// has-session avoids the misbehavior entirely; it also makes the "send-keys
+// to lock cwd" branch trivially correct (only fires for the fresh-create
+// path).
 //
-// When we *just created* a session (HasSession=false before the call), we also
-// send-keys `cd DIR; clear` to the new pane. tmux's `-c DIR` does set the
-// initial cwd, but some user shell-integration setups (cmux relays, terminal
-// shell-integration scripts, plugin frameworks that source many rcs) cd
-// elsewhere late in shell startup and silently override `-c`. The send-keys
-// is a no-op visually on a clean shell (cd to current dir, then clear), and
-// fixes the case where the shell did drift. It's never sent for *existing*
-// sessions we're just attaching to — that would disturb whatever the user
-// has running there.
-//
-// On the attach branch this exec's into tmux so the user's shell becomes the
-// tmux client. On the switch-client branch it returns normally because the
-// calling tmux client is being switched in place.
+// The `=NAME` target syntax disables fnmatch wildcards, so a session named
+// e.g. `foo*` doesn't accidentally match other sessions.
 func (c *Client) Attach(ctx context.Context, spec AttachSpec) error {
 	if spec.Name == "" {
 		return os.ErrInvalid
 	}
 
-	wasFresh := !c.HasSession(ctx, spec.Name)
-
-	createArgs := []string{"new-session", "-A", "-d", "-s", spec.Name}
-	if spec.Cwd != "" {
-		createArgs = append(createArgs, "-c", spec.Cwd)
-	}
-	if err := c.Run(ctx, createArgs...); err != nil {
-		return err
-	}
-
-	if wasFresh && spec.Cwd != "" {
-		c.refreshFreshPaneCwd(ctx, spec.Name, spec.Cwd)
+	existed := c.HasSession(ctx, spec.Name)
+	if !existed {
+		createArgs := []string{"new-session", "-d", "-s", spec.Name}
+		if spec.Cwd != "" {
+			createArgs = append(createArgs, "-c", spec.Cwd)
+		}
+		if err := c.Run(ctx, createArgs...); err != nil {
+			return err
+		}
+		if spec.Cwd != "" {
+			c.refreshFreshPaneCwd(ctx, spec.Name, spec.Cwd)
+		}
 	}
 
 	if spec.Detach {

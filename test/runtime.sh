@@ -101,8 +101,9 @@ case_attach_existing() {
   # Pretend tmux has one session, named alpha at /tmp.
   echo "alpha	1	1700000000	/tmp	2" > "$tmp/sessions"
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  # Tell the stub that 'alpha' already exists, so wasFresh=false and the
-  # binary should NOT send-keys cd to its pane.
+  # Tell the stub that 'alpha' already exists. The binary should branch
+  # past create entirely (no new-session, no send-keys) and go straight to
+  # attach.
   MOCK_TMUX_HAS_SESSIONS="alpha"
   export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
 
@@ -112,15 +113,27 @@ case_attach_existing() {
 
   "$BIN" login
 
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s alpha -c /tmp" || return 1
   # Outside tmux: we exec attach. But syscall.Exec replaces this very process —
   # in the test, the stub's tmux is found and ignores the request, so we see
   # the argv line from the EXEC'd tmux instead (recorded by the stub).
   assert_argv_line_has "$RUN_LOG" "attach -t =alpha" || return 1
+  # Existing-session must not invoke new-session at all (the -A -d combo
+  # is broken on tmux 3.4-3.6a; we use explicit has-session branching).
+  if grep -F "new-session" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "new-session was called for an existing session — should be skipped"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
   # Existing-session attach must NOT send-keys to the pane (would disturb
   # whatever the user has running there).
   if grep -F "send-keys" "$RUN_LOG" >/dev/null 2>&1; then
     echo "send-keys was called for an existing session — should be skipped"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  # And the dangerous -A flag must never appear.
+  if grep -F "new-session -A" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: -A flag in new-session call (causes tty failure)"
     cat "$RUN_LOG" >&2
     return 1
   fi
@@ -147,7 +160,7 @@ case_attach_fresh_sends_cd() {
   "$BIN" login
 
   # Created the session with -c PATH:
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s newone -c $tmp/dev/realdir" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s newone -c $tmp/dev/realdir" || return 1
   # AND defensive send-keys cd was issued to the new pane.
   # The stub re-quotes argv when logging, so we check for substrings rather
   # than the exact recorded line.
@@ -172,7 +185,7 @@ case_session_name_with_spaces() {
   "$BIN" login
 
   # We log spaces via single-quoting; the assertion looks for the raw form.
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s 'my session'" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s 'my session'" || return 1
   teardown
 }
 
@@ -194,7 +207,7 @@ case_type_to_create() {
 
   "$BIN" login
 
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s newproj -c $tmp/dev/newproj" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s newproj -c $tmp/dev/newproj" || return 1
   teardown
 }
 
@@ -223,7 +236,7 @@ case_type_to_create_auto_mkdir() {
 
   # Post-condition: dir was auto-created, session attached at it.
   [ -d "$tmp/dev/testo" ] || { echo "auto-mkdir failed: $tmp/dev/testo not created"; return 1; }
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s testo -c $tmp/dev/testo" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s testo -c $tmp/dev/testo" || return 1
   teardown
 }
 
@@ -245,7 +258,7 @@ case_dash_prefixed_name() {
 
   # The session name "-foo" must reach tmux as a target via -s; if it leaked
   # into a flag slot the stub would swallow it as -f -o -o.
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s -foo -c" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s -foo -c" || return 1
   teardown
 }
 
@@ -304,7 +317,7 @@ case_inside_tmux_short_circuit() {
 case_attach_with_cwd() {
   setup
   "$BIN" attach --cwd /tmp/x --detach myproj
-  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s myproj -c /tmp/x" || return 1
+  assert_argv_line_has "$RUN_LOG" "new-session -d -s myproj -c /tmp/x" || return 1
   teardown
 }
 
