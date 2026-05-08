@@ -107,8 +107,10 @@ case_attach_existing() {
   MOCK_TMUX_HAS_SESSIONS="alpha"
   export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
 
-  # fzf call 1: user picks the alpha row.
-  printf '\nattach\x1falpha\x1f/tmp\t● alpha (2w, 5m ago)\n' > "$FZF_OUTPUTS_DIR/1"
+  # fzf call 1: user picks the alpha row. The leading "\n" is the (empty)
+  # expect-key line — fzf emits it when --expect is set, even on a normal
+  # Enter selection. Then empty query, then the selected row.
+  printf '\n\nattach\x1falpha\x1f/tmp\t● alpha 5m ago\n' > "$FZF_OUTPUTS_DIR/1"
   echo 0 > "$FZF_RC_DIR/1"
 
   "$BIN" login
@@ -150,10 +152,10 @@ case_attach_fresh_sends_cd() {
 
   mkdir -p "$tmp/dev/realdir"
 
-  # fzf #1: rc=1, query "newone"
-  echo "newone" > "$FZF_OUTPUTS_DIR/1"
+  # fzf #1: rc=1, query "newone". With --expect, emit empty expect-key first.
+  printf '\nnewone\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
-  # fzf #2: pick realdir
+  # fzf #2: dir picker (no --expect), pick realdir.
   printf '\nattach\x1fnewone\x1f%s\trealdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/2"
   echo 0 > "$FZF_RC_DIR/2"
 
@@ -179,7 +181,7 @@ case_session_name_with_spaces() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  printf "\nattach\x1fmy session\x1f/tmp\t● my session (1w)\n" > "$FZF_OUTPUTS_DIR/1"
+  printf "\n\nattach\x1fmy session\x1f/tmp\t● my session\n" > "$FZF_OUTPUTS_DIR/1"
   echo 0 > "$FZF_RC_DIR/1"
 
   "$BIN" login
@@ -196,8 +198,8 @@ case_type_to_create() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  # fzf #1: --print-query rc=1 with query "newproj"
-  echo "newproj" > "$FZF_OUTPUTS_DIR/1"
+  # fzf #1: --print-query rc=1 with query "newproj"; --expect prepends key line.
+  printf '\nnewproj\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   # fzf #2: dir picker — user picks /home/u/dev/newproj
   printf '\nattach\x1fnewproj\x1f%s\tnewproj\t~/dev/newproj\n' "$tmp/dev/newproj" > "$FZF_OUTPUTS_DIR/2"
@@ -222,10 +224,10 @@ case_type_to_create_auto_mkdir() {
   # First root must exist so it's adopted as the auto-mkdir base.
   mkdir -p "$tmp/dev"
 
-  # fzf #1: --print-query rc=1 with query "testo"
-  echo "testo" > "$FZF_OUTPUTS_DIR/1"
+  # fzf #1: --print-query rc=1 with query "testo"; --expect prepends key line.
+  printf '\ntesto\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
-  # fzf #2: also rc=1 (zero-match) with the pre-filled query echoed back.
+  # fzf #2: dir picker (no --expect), also rc=1 with echoed query.
   echo "testo" > "$FZF_OUTPUTS_DIR/2"
   echo 1 > "$FZF_RC_DIR/2"
 
@@ -247,7 +249,7 @@ case_dash_prefixed_name() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  echo "-foo" > "$FZF_OUTPUTS_DIR/1"
+  printf '\n-foo\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   printf '\nattach\x1f-foo\x1f%s\tfoo\t~/dev/foo\n' "$tmp/dev/foo" > "$FZF_OUTPUTS_DIR/2"
   echo 0 > "$FZF_RC_DIR/2"
@@ -269,7 +271,9 @@ case_esc_with_query() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  echo "newproj" > "$FZF_OUTPUTS_DIR/1"
+  # rc=130 + query "newproj"; --expect prepends an empty key line so the
+  # parser sees: key="", query="newproj", selected="".
+  printf '\nnewproj\n' > "$FZF_OUTPUTS_DIR/1"
   echo 130 > "$FZF_RC_DIR/1"
 
   "$BIN" login
@@ -353,6 +357,63 @@ case_install_hooks_idempotent() {
   teardown
 }
 
+# --- 12. ctrl-x kill from picker, then enter on remaining session ----------
+case_ctrlx_kill() {
+  setup
+  printf 'alpha\t0\t1700000000\t/tmp\t1\nbeta\t0\t1700000100\t/tmp\t1\n' > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  # Both alpha and beta exist so we can attach; for the kill test the stub
+  # accepts kill-session without checking has-session.
+  MOCK_TMUX_HAS_SESSIONS="alpha:beta"
+  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
+
+  # fzf #1: user presses ctrl-x while highlighting alpha.
+  # Output shape with --expect: <key>\n<query>\n<selected>\n
+  printf 'ctrl-x\n\nattach\x1falpha\x1f/tmp\t● alpha 5m ago\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+  # fzf #2: after the kill, the picker re-renders. User picks beta with Enter.
+  printf '\n\nattach\x1fbeta\x1f/tmp\t○ beta 1h ago\n' > "$FZF_OUTPUTS_DIR/2"
+  echo 0 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  # The kill must have fired against alpha:
+  assert_argv_line_has "$RUN_LOG" "kill-session -t =alpha" || return 1
+  # And then we attached to beta (no kill there):
+  assert_argv_line_has "$RUN_LOG" "attach -t =beta" || return 1
+  if grep -F "kill-session -t =beta" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "kill-session fired for beta (should only have killed alpha)"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 13. ctrl-x on the [skip] sentinel is a no-op ---------------------------
+case_ctrlx_on_skip() {
+  setup
+  printf 'alpha\t0\t1700000000\t/tmp\t1\n' > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  MOCK_TMUX_HAS_SESSIONS="alpha"
+  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
+
+  # User pressed ctrl-x on the [skip] row (Action="skip", not "attach").
+  printf 'ctrl-x\n\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+  # Re-render: this time user just hits Esc.
+  printf '\n\n' > "$FZF_OUTPUTS_DIR/2"
+  echo 130 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  if grep -F "kill-session" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "ctrl-x on [skip] should be a no-op; no kill should fire"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
 echo "test/runtime.sh: running cases ..."
 run_case "attach-existing"                  case_attach_existing
 run_case "fresh-attach sends cd lock"       case_attach_fresh_sends_cd
@@ -367,6 +428,8 @@ run_case "attach --cwd --detach"            case_attach_with_cwd
 run_case "doctor output shape"              case_doctor_shape
 run_case "install-hooks --dry-run"          case_install_hooks_dry_run
 run_case "install-hooks idempotent"         case_install_hooks_idempotent
+run_case "ctrl-x kill then re-pick"         case_ctrlx_kill
+run_case "ctrl-x on [skip] is a no-op"      case_ctrlx_on_skip
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

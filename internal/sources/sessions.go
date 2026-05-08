@@ -63,21 +63,42 @@ func formatSessionLine(s tmux.Session, mtime, now int64) string {
 	if s.Attached {
 		icon = "●"
 	}
-	last := "—"
+	last := "never"
 	if mtime > 0 {
 		last = humanAgo(now - mtime)
 	}
-	return fmt.Sprintf("%s\t%s\t(%dw, %s)", icon, s.Name, s.Windows, last)
+	return fmt.Sprintf("%s\t%s\t%s", icon, s.Name, last)
 }
 
+// humanAgo renders a duration with mixed precision so transitions across
+// thresholds don't lose information. Examples:
+//
+//	30s   → "just now"
+//	5m    → "5m ago"
+//	1h13m → "1h13m ago"   (kept precise; was just "1h ago" before)
+//	1h    → "1h ago"      (drop minutes when zero, no "1h0m")
+//	2d5h  → "2d5h ago"
+//	7d+   → "7d ago"      (no point keeping hour-precision for week-old)
 func humanAgo(seconds int64) string {
 	switch {
 	case seconds < 60:
-		return fmt.Sprintf("%ds ago", seconds)
+		return "just now"
 	case seconds < 3600:
 		return fmt.Sprintf("%dm ago", seconds/60)
 	case seconds < 86400:
-		return fmt.Sprintf("%dh ago", seconds/3600)
+		h := seconds / 3600
+		m := (seconds % 3600) / 60
+		if m == 0 {
+			return fmt.Sprintf("%dh ago", h)
+		}
+		return fmt.Sprintf("%dh%dm ago", h, m)
+	case seconds < 7*86400:
+		d := seconds / 86400
+		h := (seconds % 86400) / 3600
+		if h == 0 {
+			return fmt.Sprintf("%dd ago", d)
+		}
+		return fmt.Sprintf("%dd%dh ago", d, h)
 	default:
 		return fmt.Sprintf("%dd ago", seconds/86400)
 	}
