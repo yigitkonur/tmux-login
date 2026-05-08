@@ -156,6 +156,35 @@ case_type_to_create() {
   teardown
 }
 
+# --- 3b. type-to-create with no matching dir (auto-mkdir) ------------------
+case_type_to_create_auto_mkdir() {
+  setup
+  : > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export MOCK_TMUX_LIST_SESSIONS TMUX_LOGIN_ROOTS
+
+  # First root must exist so it's adopted as the auto-mkdir base.
+  mkdir -p "$tmp/dev"
+
+  # fzf #1: --print-query rc=1 with query "testo"
+  echo "testo" > "$FZF_OUTPUTS_DIR/1"
+  echo 1 > "$FZF_RC_DIR/1"
+  # fzf #2: also rc=1 (zero-match) with the pre-filled query echoed back.
+  echo "testo" > "$FZF_OUTPUTS_DIR/2"
+  echo 1 > "$FZF_RC_DIR/2"
+
+  # Pre-condition: testo must NOT exist yet.
+  [ -d "$tmp/dev/testo" ] && { echo "test setup wrong: $tmp/dev/testo already exists"; return 1; }
+
+  "$BIN" login
+
+  # Post-condition: dir was auto-created, session attached at it.
+  [ -d "$tmp/dev/testo" ] || { echo "auto-mkdir failed: $tmp/dev/testo not created"; return 1; }
+  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s testo -c $tmp/dev/testo" || return 1
+  teardown
+}
+
 # --- 4. dash-prefixed name --------------------------------------------------
 case_dash_prefixed_name() {
   setup
@@ -273,6 +302,7 @@ echo "test/runtime.sh: running cases ..."
 run_case "attach-existing"                  case_attach_existing
 run_case "session-name-with-spaces"         case_session_name_with_spaces
 run_case "type-to-create"                   case_type_to_create
+run_case "type-to-create-auto-mkdir"        case_type_to_create_auto_mkdir
 run_case "dash-prefixed-name"               case_dash_prefixed_name
 run_case "esc-with-query (no create)"       case_esc_with_query
 run_case "TMUX_LOGIN_SKIP=1 short-circuit"  case_skip_short_circuit

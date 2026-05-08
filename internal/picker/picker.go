@@ -20,6 +20,7 @@ type Spec struct {
 	Lines  []string // already-encoded item lines (and any sentinels at desired position)
 	Expect []string // keys we want fzf to capture and return as the first line
 	Binds  []string // each is a complete fzf --bind argument value (e.g. "ctrl-x:execute-silent(...)+abort")
+	Query  string   // initial query text — pre-filled into fzf's filter
 	// PrintQuery enables the rc-trap. The picker always wants this true; left
 	// as a field so tests can assert.
 	PrintQuery bool

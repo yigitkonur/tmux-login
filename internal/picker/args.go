@@ -24,6 +24,9 @@ func buildArgs(spec Spec) []string {
 	if spec.Header != "" {
 		args = append(args, "--header="+spec.Header)
 	}
+	if spec.Query != "" {
+		args = append(args, "--query="+spec.Query)
+	}
 	if len(spec.Expect) > 0 {
 		args = append(args, "--expect="+strings.Join(spec.Expect, ","))
 	}

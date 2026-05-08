@@ -103,3 +103,20 @@ func TestPickWithStubSpawner(t *testing.T) {
 		t.Errorf("parsed = %+v", p)
 	}
 }
+
+// TestPickQueryPrefill: when Spec.Query is set, fzf gets --query=VALUE so
+// the user lands in the picker with the filter already applied.
+func TestPickQueryPrefill(t *testing.T) {
+	spec := Spec{Lines: []string{"x\ty"}, Query: "testo", PrintQuery: true}
+	stub := func(ctx context.Context, args []string, stdin []byte, env []string) ([]byte, int, error) {
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--query=testo") {
+			t.Errorf("args missing --query=testo: %s", joined)
+		}
+		return []byte("testo\n"), 1, nil // rc=1 = no match, query echoed back
+	}
+	r, _ := Pick(context.Background(), spec, stub)
+	if !r.IsTypeToCreate() || r.Query != "testo" {
+		t.Errorf("expected type-to-create with query=testo; got %+v", r)
+	}
+}

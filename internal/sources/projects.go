@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
@@ -72,11 +73,18 @@ func (p *Projects) Items(ctx context.Context) ([]Item, error) {
 		}
 		// Depth-0: the root itself.
 		add(root)
-		// Depth-1: immediate children, with prune.
+		// Depth-1: immediate children, with prune. Sorted by mtime descending
+		// so projects you've actually touched bubble up; ties broken by name
+		// asc so the output is stable across boring days.
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			continue
 		}
+		type kid struct {
+			name  string
+			mtime int64
+		}
+		kids := make([]kid, 0, len(entries))
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
@@ -84,7 +92,20 @@ func (p *Projects) Items(ctx context.Context) ([]Item, error) {
 			if _, blocked := prune[e.Name()]; blocked {
 				continue
 			}
-			add(filepath.Join(root, e.Name()))
+			var mt int64
+			if info, err := e.Info(); err == nil {
+				mt = info.ModTime().Unix()
+			}
+			kids = append(kids, kid{name: e.Name(), mtime: mt})
+		}
+		sort.SliceStable(kids, func(i, j int) bool {
+			if kids[i].mtime != kids[j].mtime {
+				return kids[i].mtime > kids[j].mtime
+			}
+			return kids[i].name < kids[j].name
+		})
+		for _, k := range kids {
+			add(filepath.Join(root, k.name))
 		}
 	}
 
