@@ -111,9 +111,7 @@ func runAttach(ctx context.Context, args []string) error {
 	if err := tx.Attach(ctx, spec); err != nil {
 		return err
 	}
-	_ = c.RecordAttach(name)
 	if *cwd != "" {
-		_ = c.RecordCwd(name, *cwd)
 		_ = c.RecordRecentDir(*cwd)
 	}
 	return nil
@@ -129,15 +127,10 @@ func runKill(ctx context.Context, args []string) error {
 	}
 	name := fs.Arg(0)
 
-	cfg := config.Load()
-	c := cache.New(cfg.CacheDir)
 	tx := tmux.New()
-
 	if err := tx.KillSession(ctx, name); err != nil {
-		// Best-effort: surface but don't crash.
 		fmt.Fprintf(os.Stderr, "tmux-login: kill: %v\n", err)
 	}
-	c.DropSession(name)
 	return nil
 }
 

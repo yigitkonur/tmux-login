@@ -155,10 +155,12 @@ ensure_dep() {
 
 ensure_dep tmux "$tmux_cmd" 1 || true
 ensure_dep fzf  "$fzf_cmd"  1 || true
-# sesh is OPTIONAL but strongly recommended — gives multi-source list
-# (zoxide, sesh.toml configs) + Nerd Font icons + idempotent connect.
-# Falls back to internal session-list when absent.
-ensure_dep sesh "$sesh_cmd" 0 || true
+# sesh is REQUIRED as of v0.3 — it provides the session-list source
+# (multi-source: tmux + zoxide + sesh.toml + tmuxinator with Nerd Font
+# icons) and idempotent attach via `sesh connect`. We deliberately
+# don't carry a fallback session-listing path anymore: the codebase is
+# meaningfully smaller and there's nothing sesh+brew won't cover.
+ensure_dep sesh "$sesh_cmd" 1 || true
 
 # Locate the source tree (clone) or download tarball when run via curl-pipe.
 script_dir=""

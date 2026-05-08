@@ -6,7 +6,15 @@
 
 a re-architecture of [yigitkonur/zellij-login](https://github.com/yigitkonur/zellij-login)
 for tmux. go binary instead of a 400-line zsh hook on the hot path.
-~50 ms cold start. macos + linux.
+~30 ms cold start. macos + linux.
+
+since v0.3 tmux-login is a thin shell on top of [sesh](https://github.com/joshmedeski/sesh)
+(session listing + idempotent attach) and [tmux-resurrect / tmux-continuum](https://github.com/tmux-plugins/tmux-continuum)
+(auto-save + auto-restore on server start). we keep only what those
+tools don't do: SSH-login hook, M-letter no-prefix keymap, ctrl-x kill
+in the picker, type-to-create + dir picker, byte-for-byte install
+hygiene. **sesh is required** — `brew install sesh` (homebrew-core);
+the binary fails fast with a clear message if absent.
 
 ```
                                                   ┌──────────────────────────────────────┐

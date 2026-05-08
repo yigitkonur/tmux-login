@@ -12,7 +12,7 @@ import (
 func TestEncodeDecodeRoundtrip(t *testing.T) {
 	cases := []sources.Item{
 		{ActionKind: sources.ActionAttach, Target: "alpha", Cwd: "/home/u/dev/alpha", Display: "● alpha (3w)"},
-		{ActionKind: sources.ActionSwitchTo, Target: "alpha:1", Cwd: "", Display: "alpha:1 nvim"},
+		{ActionKind: sources.ActionAttach, Target: "alpha:1", Cwd: "", Display: "alpha:1 nvim"},
 		{ActionKind: sources.ActionAttach, Target: "name with spaces", Cwd: "/home/u/dev/x y", Display: "with spaces (1w)"},
 	}
 	for _, in := range cases {

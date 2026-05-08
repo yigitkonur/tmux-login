@@ -44,18 +44,10 @@ func Decode(line string) (action, target, cwd, display string, ok bool) {
 }
 
 func actionName(k sources.ActionKind) string {
-	switch k {
-	case sources.ActionAttach:
+	if k == sources.ActionAttach {
 		return "attach"
-	case sources.ActionSwitchTo:
-		return "switch"
-	case sources.ActionSSHWindow:
-		return "ssh"
-	case sources.ActionShowHelp:
-		return "help"
-	default:
-		return "noop"
 	}
+	return "noop"
 }
 
 // SkipSentinel is the row pinned to the top of the SSH-login picker so

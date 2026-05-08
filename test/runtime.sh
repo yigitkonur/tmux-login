@@ -31,11 +31,13 @@ setup() {
   RUN_LOG="$tmp/tmux.argv.log"
   : > "$RUN_LOG"
 
-  # Most existing cases run against the no-sesh code path. Disable sesh
-  # by default by pointing SESH_BIN at a missing path; tests that want
-  # sesh active export SESH_BIN="$shimdir/sesh" themselves.
-  SESH_BIN="/no/such/sesh"
-  export SESH_BIN
+  # As of v0.3 sesh is required. Default SESH_BIN to the stub so the
+  # binary's `sx.Available()` returns true. Tests that want zero items
+  # in the picker leave MOCK_SESH_LIST empty/unset (the stub's `list`
+  # subcommand emits nothing then).
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST=""
+  export SESH_BIN MOCK_SESH_LIST
 
   FZF_OUTPUTS_DIR="$tmp/fzf-out"
   FZF_RC_DIR="$tmp/fzf-rc"
@@ -102,52 +104,8 @@ assert_argv_line_has() {
 # expect-key line if --expect was passed, the query line (--print-query),
 # and the selected line.
 
-# --- 1. attach-existing -----------------------------------------------------
-case_attach_existing() {
-  setup
-  # Pretend tmux has one session, named alpha at /tmp.
-  echo "alpha	1	1700000000	/tmp	2" > "$tmp/sessions"
-  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  # Tell the stub that 'alpha' already exists. The binary should branch
-  # past create entirely (no new-session, no send-keys) and go straight to
-  # attach.
-  MOCK_TMUX_HAS_SESSIONS="alpha"
-  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
-
-  # fzf call 1: user picks the alpha row. The leading "\n" is the (empty)
-  # expect-key line — fzf emits it when --expect is set, even on a normal
-  # Enter selection. Then empty query, then the selected row.
-  printf '\n\nattach\x1falpha\x1f/tmp\t● alpha 5m ago\n' > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-
-  "$BIN" login
-
-  # Outside tmux: we exec attach. But syscall.Exec replaces this very process —
-  # in the test, the stub's tmux is found and ignores the request, so we see
-  # the argv line from the EXEC'd tmux instead (recorded by the stub).
-  assert_argv_line_has "$RUN_LOG" "attach -t =alpha" || return 1
-  # Existing-session must not invoke new-session at all (the -A -d combo
-  # is broken on tmux 3.4-3.6a; we use explicit has-session branching).
-  if grep -F "new-session" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "new-session was called for an existing session — should be skipped"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  # Existing-session attach must NOT send-keys to the pane (would disturb
-  # whatever the user has running there).
-  if grep -F "send-keys" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "send-keys was called for an existing session — should be skipped"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  # And the dangerous -A flag must never appear.
-  if grep -F "new-session -A" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "regression: -A flag in new-session call (causes tty failure)"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  teardown
-}
+# Note: existing-session attach is now covered by case_sesh_engine_attach_existing
+# (sesh handles attach to existing sessions; the no-sesh tmux-only path is gone).
 
 # --- 1b. attach-fresh-creation sends-keys cd to lock cwd -------------------
 case_attach_fresh_sends_cd() {
@@ -178,23 +136,6 @@ case_attach_fresh_sends_cd() {
     cat "$RUN_LOG" >&2
     return 1
   fi
-  teardown
-}
-
-# --- 2. session name with spaces -------------------------------------------
-case_session_name_with_spaces() {
-  setup
-  echo "my session	1	1700000000	/tmp	1" > "$tmp/sessions"
-  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  export MOCK_TMUX_LIST_SESSIONS
-
-  printf "\n\nattach\x1fmy session\x1f/tmp\t● my session\n" > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-
-  "$BIN" login
-
-  # We log spaces via single-quoting; the assertion looks for the raw form.
-  assert_argv_line_has "$RUN_LOG" "new-session -d -s 'my session'" || return 1
   teardown
 }
 
@@ -365,36 +306,8 @@ case_install_hooks_idempotent() {
 }
 
 # --- 12. ctrl-x kill from picker, then enter on remaining session ----------
-case_ctrlx_kill() {
-  setup
-  printf 'alpha\t0\t1700000000\t/tmp\t1\nbeta\t0\t1700000100\t/tmp\t1\n' > "$tmp/sessions"
-  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  # Both alpha and beta exist so we can attach; for the kill test the stub
-  # accepts kill-session without checking has-session.
-  MOCK_TMUX_HAS_SESSIONS="alpha:beta"
-  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
-
-  # fzf #1: user presses ctrl-x while highlighting alpha.
-  # Output shape with --expect: <key>\n<query>\n<selected>\n
-  printf 'ctrl-x\n\nattach\x1falpha\x1f/tmp\t● alpha 5m ago\n' > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-  # fzf #2: after the kill, the picker re-renders. User picks beta with Enter.
-  printf '\n\nattach\x1fbeta\x1f/tmp\t○ beta 1h ago\n' > "$FZF_OUTPUTS_DIR/2"
-  echo 0 > "$FZF_RC_DIR/2"
-
-  "$BIN" login
-
-  # The kill must have fired against alpha:
-  assert_argv_line_has "$RUN_LOG" "kill-session -t =alpha" || return 1
-  # And then we attached to beta (no kill there):
-  assert_argv_line_has "$RUN_LOG" "attach -t =beta" || return 1
-  if grep -F "kill-session -t =beta" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "kill-session fired for beta (should only have killed alpha)"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  teardown
-}
+# Note: ctrl-x kill against a real session is covered by
+# case_sesh_engine_ctrlx_kill (sesh-engine path is the only one now).
 
 # --- 13. ctrl-x on the [skip] sentinel is a no-op ---------------------------
 case_ctrlx_on_skip() {
@@ -511,36 +424,8 @@ case_sesh_engine_ctrlx_kill() {
   teardown
 }
 
-# --- 17. sesh unavailable → original code path runs ------------------------
-case_sesh_unavailable_fallback() {
-  setup
-  # SESH_BIN already set to /no/such/sesh in setup(). Confirm we still
-  # exercise the tmux session-list + tmux new-session path that v0.1 used.
-  echo "alpha	1	1700000000	/tmp	2" > "$tmp/sessions"
-  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  MOCK_TMUX_HAS_SESSIONS="alpha"
-  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
-
-  printf '\n\nattach\x1falpha\x1f/tmp\t● alpha\n' > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-
-  "$BIN" login
-
-  # Must NOT have called sesh.
-  if grep -F "sesh list" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "regression: sesh list called when SESH_BIN missing"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  if grep -F "sesh connect" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "regression: sesh connect called when SESH_BIN missing"
-    cat "$RUN_LOG" >&2
-    return 1
-  fi
-  # And the tmux attach path fired as before.
-  assert_argv_line_has "$RUN_LOG" "tmux attach -t =alpha" || return 1
-  teardown
-}
+# Note: there is no "sesh unavailable fallback" anymore (v0.3). If sesh
+# isn't on PATH, the binary prints a clear stderr message and exits.
 
 # --- 18. tmux-login last subcommand routes to sesh last --------------------
 case_last_subcommand() {
@@ -555,9 +440,7 @@ case_last_subcommand() {
 }
 
 echo "test/runtime.sh: running cases ..."
-run_case "attach-existing"                  case_attach_existing
 run_case "fresh-attach sends cd lock"       case_attach_fresh_sends_cd
-run_case "session-name-with-spaces"         case_session_name_with_spaces
 run_case "type-to-create"                   case_type_to_create
 run_case "type-to-create-auto-mkdir"        case_type_to_create_auto_mkdir
 run_case "dash-prefixed-name"               case_dash_prefixed_name
@@ -568,12 +451,10 @@ run_case "attach --cwd --detach"            case_attach_with_cwd
 run_case "doctor output shape"              case_doctor_shape
 run_case "install-hooks --dry-run"          case_install_hooks_dry_run
 run_case "install-hooks idempotent"         case_install_hooks_idempotent
-run_case "ctrl-x kill then re-pick"         case_ctrlx_kill
 run_case "ctrl-x on [skip] is a no-op"      case_ctrlx_on_skip
 run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
 run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
 run_case "sesh-engine ctrl-x kill"          case_sesh_engine_ctrlx_kill
-run_case "sesh unavailable falls back"      case_sesh_unavailable_fallback
 run_case "tmux-login last subcommand"       case_last_subcommand
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"
