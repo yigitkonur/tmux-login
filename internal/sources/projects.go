@@ -128,11 +128,13 @@ func deriveSessionName(base string) string {
 	return strings.ReplaceAll(base, ".", "_")
 }
 
+// formatProjectLine returns just the tilde-collapsed path. fzf's fuzzy
+// match still picks up the basename inside the path string, so we save
+// a column without losing search effectiveness — and we no longer show
+// the basename twice (once as a column, once inside the path).
 func formatProjectLine(path, home string) string {
-	disp := path
 	if home != "" && strings.HasPrefix(path, home) {
-		disp = "~" + strings.TrimPrefix(path, home)
+		return "~" + strings.TrimPrefix(path, home)
 	}
-	base := filepath.Base(path)
-	return base + "\t" + disp
+	return path
 }

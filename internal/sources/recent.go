@@ -26,7 +26,7 @@ func (r *Recent) Items(ctx context.Context) ([]Item, error) {
 		}
 		out = append(out, Item{
 			Mode:       ModeRecent,
-			Display:    name + "\t" + disp,
+			Display:    disp,
 			ActionKind: ActionAttach,
 			Target:     name,
 			Cwd:        d,
