@@ -197,6 +197,24 @@ cp -- "$src_bin" "$prefix/bin/$BIN_NAME"
 chmod +x "$prefix/bin/$BIN_NAME"
 info "installed binary at $prefix/bin/$BIN_NAME"
 
+# PATH symlink: $prefix/bin is rarely on PATH, but ~/.local/bin is XDG-blessed
+# and usually is. Drop a symlink so `tmux-login` works from any shell. If
+# the user has neither ~/.local/bin nor /usr/local/bin available, print a
+# hint instead.
+symlink_target=""
+for d in "$HOME/.local/bin" "/usr/local/bin"; do
+  if [ -d "$d" ] && [ -w "$d" ]; then
+    symlink_target="$d/$BIN_NAME"
+    break
+  fi
+done
+if [ -n "$symlink_target" ]; then
+  ln -sf "$prefix/bin/$BIN_NAME" "$symlink_target"
+  info "symlinked $symlink_target -> $prefix/bin/$BIN_NAME"
+else
+  warn "no writable \$HOME/.local/bin or /usr/local/bin found — add $prefix/bin to PATH manually"
+fi
+
 for f in $SHARE_FILES; do
   if [ -f "$src_share/$f" ]; then
     cp -- "$src_share/$f" "$prefix/share/$f"

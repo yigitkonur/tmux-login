@@ -80,6 +80,21 @@ strip_marker() {
 strip_marker "$TMUX_CONF"
 strip_marker "$ZSHRC"
 
+# Remove the PATH symlink first if it points back into our prefix. We won't
+# touch a symlink that points elsewhere (the user may have aliased manually).
+for d in "$HOME/.local/bin" "/usr/local/bin"; do
+  link="$d/tmux-login"
+  if [ -L "$link" ]; then
+    target=$(readlink "$link" 2>/dev/null || true)
+    case "$target" in
+      "$prefix/bin/tmux-login")
+        rm -f -- "$link"
+        info "removed symlink $link"
+        ;;
+    esac
+  fi
+done
+
 if [ -d "$prefix" ]; then
   rm -f -- "$prefix/bin/tmux-login"
   rm -f -- "$prefix/share/tmux.conf" "$prefix/share/tmux-login.tmux" "$prefix/share/login-hook.zsh"
