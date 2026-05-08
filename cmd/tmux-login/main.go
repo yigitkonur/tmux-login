@@ -41,6 +41,10 @@ func main() {
 		err = login.RunLast(ctx)
 	case "kill":
 		err = runKill(ctx, args)
+	case "_action":
+		// Hidden — invoked by fzf --bind in the login picker. Not part
+		// of the user-facing help text.
+		err = login.RunAction(ctx, args)
 	case "install-hooks":
 		err = runInstallHooks(args)
 	case "doctor":

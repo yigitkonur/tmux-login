@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
 	"github.com/yigitkonur/tmux-login/internal/config"
@@ -53,86 +54,104 @@ func Run(ctx context.Context) error {
 		return nil
 	}
 
-	// Loop so ctrl-x can kill the highlighted session and re-render the
-	// list. Every other terminal action (attach, type-to-create, skip,
-	// cancel) returns immediately.
-	for {
-		items, err := buildItems(ctx, sx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "tmux-login: list: %v\n", err)
-		}
-		tr.Mark("list_done", "n=", len(items))
+	items, err := buildItems(ctx, sx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tmux-login: list: %v\n", err)
+	}
+	tr.Mark("list_done", "n=", len(items))
 
-		lines := []string{picker.EncodeSkip()}
-		for _, it := range items {
-			lines = append(lines, picker.Encode(it))
-		}
+	lines := []string{picker.EncodeSkip()}
+	for _, it := range items {
+		lines = append(lines, picker.Encode(it))
+	}
 
-		header := picker.HeaderFor("login", "enter=attach/create  c-x=kill  esc=plain shell")
-		r, err := picker.Pick(ctx, picker.Spec{
-			Prompt:     "tmux session > ",
-			Header:     header,
-			Lines:      lines,
-			Expect:     []string{"ctrl-x"},
-			PrintQuery: true,
-		}, nil)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "tmux-login: picker: %v\n", err)
-			return nil
-		}
-		tr.Mark("picker_done", "rc=", r.RC, " key=", r.Key)
+	// Ctrl-X is now an in-place kill: fzf executes our hidden `_action`
+	// subcommand to kill the highlighted session, then reloads its line
+	// list, then drops the cursor on position 2 (first real session
+	// after the [skip] sentinel) so chained kills work without the
+	// cursor jumping. The picker stays open the whole time — no flicker.
+	selfBin := selfBinaryPath()
+	binds := []string{
+		fmt.Sprintf(
+			"ctrl-x:execute-silent(%s _action --kill {})+reload(%s _action --list)+pos(2)",
+			selfBin, selfBin,
+		),
+	}
 
-		if r.IsCancelled() {
-			return nil
-		}
-
-		parsed := r.Parsed()
-
-		// Ctrl-X: kill the highlighted session. Always uses tmux directly
-		// (sesh has no kill subcommand). No-op when the cursor is on the
-		// [skip] sentinel or on a non-tmux entry (e.g. a zoxide path that
-		// hasn't been promoted to a session yet — HasSession returns false).
-		if r.Key == "ctrl-x" {
-			if parsed.OK && parsed.Action == "attach" && tx.HasSession(ctx, parsed.Target) {
-				if killErr := tx.KillSession(ctx, parsed.Target); killErr != nil {
-					fmt.Fprintf(os.Stderr, "tmux-login: kill %q: %v\n", parsed.Target, killErr)
-				}
-				tr.Mark("killed", parsed.Target)
-			}
-			continue
-		}
-
-		switch {
-		case parsed.OK && parsed.Action == picker.SkipSentinel:
-			return nil
-
-		case parsed.OK && parsed.Action == "attach":
-			// sesh handles idempotent connect: creates if missing, attaches
-			// if existing, resolves zoxide paths to canonical session names.
-			if err := sx.Connect(ctx, parsed.Target); err != nil {
-				fmt.Fprintf(os.Stderr, "tmux-login: sesh connect: %v\n", err)
-			}
-			return nil
-
-		case r.IsTypeToCreate():
-			// User typed a name fzf didn't match. Run our dir picker so
-			// the new project gets an explicit start dir (sesh's connect
-			// of an unknown name would default to $HOME). After the dir
-			// is chosen, attach via tmux directly with -c <DIR>.
-			dir, err := pickDirectory(ctx, cfg, c, r.Query)
-			if err != nil || dir == "" {
-				return nil
-			}
-			spec := tmux.AttachSpec{Name: r.Query, Cwd: dir}
-			if err := dispatchAttach(ctx, tx, c, spec); err != nil {
-				fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
-			}
-			return nil
-		}
-
-		// No actionable result; treat as cancel.
+	header := picker.HeaderFor("login", "enter=attach/create  c-x=kill (in place)  esc=plain shell")
+	r, err := picker.Pick(ctx, picker.Spec{
+		Prompt:     "tmux session > ",
+		Header:     header,
+		Lines:      lines,
+		Binds:      binds,
+		PrintQuery: true,
+	}, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tmux-login: picker: %v\n", err)
 		return nil
 	}
+	tr.Mark("picker_done", "rc=", r.RC)
+
+	if r.IsCancelled() {
+		return nil
+	}
+
+	parsed := r.Parsed()
+
+	switch {
+	case parsed.OK && parsed.Action == picker.SkipSentinel:
+		return nil
+
+	case parsed.OK && parsed.Action == "attach":
+		if err := sx.Connect(ctx, parsed.Target); err != nil {
+			fmt.Fprintf(os.Stderr, "tmux-login: sesh connect: %v\n", err)
+		}
+		return nil
+
+	case r.IsTypeToCreate():
+		dir, err := pickDirectory(ctx, cfg, c, r.Query)
+		if err != nil || dir == "" {
+			return nil
+		}
+		spec := tmux.AttachSpec{Name: r.Query, Cwd: dir}
+		if err := dispatchAttach(ctx, tx, c, spec); err != nil {
+			fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
+		}
+		return nil
+	}
+
+	return nil
+}
+
+// selfBinaryPath returns the absolute path to the running tmux-login
+// binary, with shell-quoting suitable for embedding in fzf bind strings.
+// fzf passes the bind value to `sh -c`, so any space or shell-special
+// char in the path needs single-quote escaping. Falls back to "tmux-login"
+// if exec.LookPath fails (it shouldn't — we're literally running).
+func selfBinaryPath() string {
+	if exe, err := os.Executable(); err == nil {
+		return shellQuoteForBind(exe)
+	}
+	if path, err := exec.LookPath("tmux-login"); err == nil {
+		return shellQuoteForBind(path)
+	}
+	return "tmux-login"
+}
+
+func shellQuoteForBind(s string) string {
+	// Single-quoted POSIX string; embedded ' becomes '\''.
+	const sq = "'"
+	out := make([]byte, 0, len(s)+2)
+	out = append(out, sq...)
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\'' {
+			out = append(out, '\'', '\\', '\'', '\'')
+			continue
+		}
+		out = append(out, s[i])
+	}
+	out = append(out, sq...)
+	return string(out)
 }
 
 // RunLast jumps to the last-attached session via `sesh last`. Wired to

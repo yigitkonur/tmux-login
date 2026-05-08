@@ -118,7 +118,7 @@ case_attach_fresh_sends_cd() {
   mkdir -p "$tmp/dev/realdir"
 
   # fzf #1: rc=1, query "newone". With --expect, emit empty expect-key first.
-  printf '\nnewone\n' > "$FZF_OUTPUTS_DIR/1"
+  printf 'newone\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   # fzf #2: dir picker (no --expect), pick realdir.
   printf '\nattach\x1fnewone\x1f%s\trealdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/2"
@@ -147,7 +147,7 @@ case_type_to_create() {
   export MOCK_TMUX_LIST_SESSIONS
 
   # fzf #1: --print-query rc=1 with query "newproj"; --expect prepends key line.
-  printf '\nnewproj\n' > "$FZF_OUTPUTS_DIR/1"
+  printf 'newproj\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   # fzf #2: dir picker — user picks /home/u/dev/newproj
   printf '\nattach\x1fnewproj\x1f%s\tnewproj\t~/dev/newproj\n' "$tmp/dev/newproj" > "$FZF_OUTPUTS_DIR/2"
@@ -173,7 +173,7 @@ case_type_to_create_auto_mkdir() {
   mkdir -p "$tmp/dev"
 
   # fzf #1: --print-query rc=1 with query "testo"; --expect prepends key line.
-  printf '\ntesto\n' > "$FZF_OUTPUTS_DIR/1"
+  printf 'testo\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   # fzf #2: dir picker (no --expect), also rc=1 with echoed query.
   echo "testo" > "$FZF_OUTPUTS_DIR/2"
@@ -197,7 +197,7 @@ case_dash_prefixed_name() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  printf '\n-foo\n' > "$FZF_OUTPUTS_DIR/1"
+  printf -- '-foo\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   printf '\nattach\x1f-foo\x1f%s\tfoo\t~/dev/foo\n' "$tmp/dev/foo" > "$FZF_OUTPUTS_DIR/2"
   echo 0 > "$FZF_RC_DIR/2"
@@ -219,9 +219,9 @@ case_esc_with_query() {
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
   export MOCK_TMUX_LIST_SESSIONS
 
-  # rc=130 + query "newproj"; --expect prepends an empty key line so the
-  # parser sees: key="", query="newproj", selected="".
-  printf '\nnewproj\n' > "$FZF_OUTPUTS_DIR/1"
+  # rc=130 + query "newproj". With --expect dropped, fzf emits just the
+  # query line; the parser sees: query="newproj", selected="".
+  printf 'newproj\n' > "$FZF_OUTPUTS_DIR/1"
   echo 130 > "$FZF_RC_DIR/1"
 
   "$BIN" login
@@ -309,25 +309,17 @@ case_install_hooks_idempotent() {
 # Note: ctrl-x kill against a real session is covered by
 # case_sesh_engine_ctrlx_kill (sesh-engine path is the only one now).
 
-# --- 13. ctrl-x on the [skip] sentinel is a no-op ---------------------------
-case_ctrlx_on_skip() {
+# --- 13. _action --kill on the [skip] sentinel is a no-op ------------------
+# (the kill is now invoked via fzf bind execute-silent — we test the
+# subcommand directly since the stub fzf can't simulate bind execution.)
+case_action_kill_on_sentinel() {
   setup
-  printf 'alpha\t0\t1700000000\t/tmp\t1\n' > "$tmp/sessions"
-  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  MOCK_TMUX_HAS_SESSIONS="alpha"
-  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
 
-  # User pressed ctrl-x on the [skip] row (Action="skip", not "attach").
-  printf 'ctrl-x\n\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-  # Re-render: this time user just hits Esc.
-  printf '\n\n' > "$FZF_OUTPUTS_DIR/2"
-  echo 130 > "$FZF_RC_DIR/2"
-
-  "$BIN" login
+  # The [skip] sentinel encoded line: action="skip", target empty.
+  "$BIN" _action --kill 'skip\x1f\x1f\t[ skip · plain shell ]' 2>&1
 
   if grep -F "kill-session" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "ctrl-x on [skip] should be a no-op; no kill should fire"
+    echo "_action --kill on a sentinel must be a no-op"
     cat "$RUN_LOG" >&2
     return 1
   fi
@@ -346,9 +338,9 @@ case_sesh_engine_attach_existing() {
   printf '\x1b[34m \x1b[39m alpha\n\x1b[36m \x1b[39m ~/dev/proj\n' > "$MOCK_SESH_LIST"
   export SESH_BIN MOCK_SESH_LIST
 
-  # fzf #1: user picks the alpha row. The encoded display is what the
-  # binary built from sesh's output (raw ANSI line preserved as Display).
-  printf '\n\nattach\x1falpha\x1f\t\x1b[34m \x1b[39m alpha\n' > "$FZF_OUTPUTS_DIR/1"
+  # fzf #1: user picks the alpha row. With --expect dropped, fzf emits
+  # the query line then the selected line — no leading expect-key line.
+  printf '\nattach\x1falpha\x1f\t\x1b[34m \x1b[39m alpha\n' > "$FZF_OUTPUTS_DIR/1"
   echo 0 > "$FZF_RC_DIR/1"
 
   "$BIN" login
@@ -377,7 +369,7 @@ case_sesh_engine_type_to_create() {
   mkdir -p "$tmp/dev/realdir"
 
   # fzf #1: --print-query rc=1 (no match), query "newone".
-  printf '\nnewone\n' > "$FZF_OUTPUTS_DIR/1"
+  printf 'newone\n' > "$FZF_OUTPUTS_DIR/1"
   echo 1 > "$FZF_RC_DIR/1"
   # fzf #2: dir picker (no --expect), pick realdir.
   printf '\nattach\x1fnewone\x1f%s\trealdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/2"
@@ -396,31 +388,64 @@ case_sesh_engine_type_to_create() {
   teardown
 }
 
-# --- 16. sesh-engine: ctrl-x kill still goes through tmux directly ---------
-case_sesh_engine_ctrlx_kill() {
+# --- 16. _action --kill on a real session calls tmux kill-session ----------
+# (replaces the older case_sesh_engine_ctrlx_kill that drove a stubbed fzf
+# --expect=ctrl-x flow; the bind path runs the kill via execute-silent in
+# fzf itself, which our shell-stub fzf can't simulate. Test the subcommand.)
+case_action_kill_real_session() {
   setup
-  SESH_BIN="$shimdir/sesh"
-  MOCK_SESH_LIST="$tmp/sesh.list"
-  printf '\x1b[34m \x1b[39m alpha\n' > "$MOCK_SESH_LIST"
   MOCK_TMUX_HAS_SESSIONS="alpha"
-  export SESH_BIN MOCK_SESH_LIST MOCK_TMUX_HAS_SESSIONS
+  export MOCK_TMUX_HAS_SESSIONS
 
-  # ctrl-x on alpha → kill, re-render.
-  printf 'ctrl-x\n\nattach\x1falpha\x1f\t alpha\n' > "$FZF_OUTPUTS_DIR/1"
-  echo 0 > "$FZF_RC_DIR/1"
-  # After re-render: cancel.
-  printf '\n\n' > "$FZF_OUTPUTS_DIR/2"
-  echo 130 > "$FZF_RC_DIR/2"
+  # Encoded picker line for an existing session 'alpha'.
+  "$BIN" _action --kill "$(printf 'attach\x1falpha\x1f\tdisplay-text')"
 
-  "$BIN" login
-
-  # Kill goes via tmux (sesh has no kill).
+  assert_argv_line_has "$RUN_LOG" "tmux has-session -t =alpha" || return 1
   assert_argv_line_has "$RUN_LOG" "tmux kill-session -t =alpha" || return 1
-  if grep -F "sesh connect" "$RUN_LOG" >/dev/null 2>&1; then
-    echo "regression: sesh connect called during a kill flow"
+  if grep -F "sesh" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: sesh called during _action --kill"
     cat "$RUN_LOG" >&2
     return 1
   fi
+  teardown
+}
+
+# --- 16b. _action --kill on a zoxide path is a no-op (no session exists) ---
+case_action_kill_zoxide_path() {
+  setup
+  # Empty MOCK_TMUX_HAS_SESSIONS → has-session always returns 1.
+  export MOCK_TMUX_HAS_SESSIONS=""
+
+  # Encoded picker line for a zoxide path (target = "~/dev/proj").
+  "$BIN" _action --kill "$(printf 'attach\x1f~/dev/proj\x1f\tdisplay-text')"
+
+  assert_argv_line_has "$RUN_LOG" "tmux has-session" || return 1
+  if grep -F "kill-session" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "kill-session should NOT fire when has-session returns 1"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 16c. _action --list emits encoded picker lines from sesh.List ---------
+case_action_list_emits_encoded_lines() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  printf '\x1b[34m \x1b[39m alpha\n\x1b[36m \x1b[39m ~/dev/proj\n' > "$MOCK_SESH_LIST"
+  export SESH_BIN MOCK_SESH_LIST
+
+  out=$("$BIN" _action --list 2>&1)
+
+  # First line should be the [skip] sentinel.
+  echo "$out" | head -1 | grep -Fq '[ skip · plain shell ]' \
+    || { echo "_action --list missing skip sentinel"; echo "$out"; return 1; }
+  # Each item line is `<encoded>\t<display>`; check the encoded prefix
+  # contains the target.
+  echo "$out" | grep -Fq 'alpha' || { echo "_action --list missing 'alpha'"; echo "$out"; return 1; }
+  # shellcheck disable=SC2088  # literal tilde is what sesh emits; we don't want $HOME expansion
+  echo "$out" | grep -Fq '~/dev/proj' || { echo "_action --list missing '~/dev/proj'"; echo "$out"; return 1; }
   teardown
 }
 
@@ -451,10 +476,12 @@ run_case "attach --cwd --detach"            case_attach_with_cwd
 run_case "doctor output shape"              case_doctor_shape
 run_case "install-hooks --dry-run"          case_install_hooks_dry_run
 run_case "install-hooks idempotent"         case_install_hooks_idempotent
-run_case "ctrl-x on [skip] is a no-op"      case_ctrlx_on_skip
+run_case "_action --kill on sentinel"       case_action_kill_on_sentinel
+run_case "_action --kill real session"      case_action_kill_real_session
+run_case "_action --kill zoxide path"       case_action_kill_zoxide_path
+run_case "_action --list emits lines"       case_action_list_emits_encoded_lines
 run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
 run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
-run_case "sesh-engine ctrl-x kill"          case_sesh_engine_ctrlx_kill
 run_case "tmux-login last subcommand"       case_last_subcommand
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"
