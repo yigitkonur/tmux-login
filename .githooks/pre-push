@@ -1,0 +1,6 @@
+#!/bin/sh
+# pre-push: run `make check` before every push.
+# Bypass with `git push --no-verify` only if you know exactly what you're skipping.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+exec make check
