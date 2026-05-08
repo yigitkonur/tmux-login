@@ -101,7 +101,10 @@ case_attach_existing() {
   # Pretend tmux has one session, named alpha at /tmp.
   echo "alpha	1	1700000000	/tmp	2" > "$tmp/sessions"
   MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
-  export MOCK_TMUX_LIST_SESSIONS
+  # Tell the stub that 'alpha' already exists, so wasFresh=false and the
+  # binary should NOT send-keys cd to its pane.
+  MOCK_TMUX_HAS_SESSIONS="alpha"
+  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
 
   # fzf call 1: user picks the alpha row.
   printf '\nattach\x1falpha\x1f/tmp\t● alpha (2w, 5m ago)\n' > "$FZF_OUTPUTS_DIR/1"
@@ -114,6 +117,45 @@ case_attach_existing() {
   # in the test, the stub's tmux is found and ignores the request, so we see
   # the argv line from the EXEC'd tmux instead (recorded by the stub).
   assert_argv_line_has "$RUN_LOG" "attach -t =alpha" || return 1
+  # Existing-session attach must NOT send-keys to the pane (would disturb
+  # whatever the user has running there).
+  if grep -F "send-keys" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "send-keys was called for an existing session — should be skipped"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 1b. attach-fresh-creation sends-keys cd to lock cwd -------------------
+case_attach_fresh_sends_cd() {
+  setup
+  : > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export MOCK_TMUX_LIST_SESSIONS TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev/realdir"
+
+  # fzf #1: rc=1, query "newone"
+  echo "newone" > "$FZF_OUTPUTS_DIR/1"
+  echo 1 > "$FZF_RC_DIR/1"
+  # fzf #2: pick realdir
+  printf '\nattach\x1fnewone\x1f%s\trealdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/2"
+  echo 0 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  # Created the session with -c PATH:
+  assert_argv_line_has "$RUN_LOG" "new-session -A -d -s newone -c $tmp/dev/realdir" || return 1
+  # AND defensive send-keys cd was issued to the new pane.
+  # The stub re-quotes argv when logging, so we check for substrings rather
+  # than the exact recorded line.
+  if ! grep -F "send-keys" "$RUN_LOG" | grep -F "=newone:." | grep -F "$tmp/dev/realdir" | grep -F "clear" | grep -Fq "Enter"; then
+    echo "send-keys cd line missing or malformed in:"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
   teardown
 }
 
@@ -300,6 +342,7 @@ case_install_hooks_idempotent() {
 
 echo "test/runtime.sh: running cases ..."
 run_case "attach-existing"                  case_attach_existing
+run_case "fresh-attach sends cd lock"       case_attach_fresh_sends_cd
 run_case "session-name-with-spaces"         case_session_name_with_spaces
 run_case "type-to-create"                   case_type_to_create
 run_case "type-to-create-auto-mkdir"        case_type_to_create_auto_mkdir

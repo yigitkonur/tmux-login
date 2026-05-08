@@ -38,7 +38,23 @@ case "$sub" in
     cat "${MOCK_TMUX_LIST_WINDOWS:-/dev/null}" 2>/dev/null
     exit 0
     ;;
-  has-session|new-session|attach|attach-session|switch-client|kill-session|rename-session|detach-client|display-popup|display-message)
+  has-session)
+    # Default: no session exists (rc=1) so the binary's "fresh-session"
+    # detection works. Tests that need an existing session set
+    # MOCK_TMUX_HAS_SESSIONS=name1:name2 to opt names in.
+    target=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) target=${2#=}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    case ":${MOCK_TMUX_HAS_SESSIONS:-}:" in
+      *":$target:"*) exit 0 ;;
+      *)             exit 1 ;;
+    esac
+    ;;
+  new-session|attach|attach-session|switch-client|kill-session|rename-session|detach-client|display-popup|display-message|send-keys)
     # Consume args; succeed silently. The argv was already logged.
     exit 0
     ;;
