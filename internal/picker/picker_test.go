@@ -2,6 +2,7 @@ package picker
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -88,6 +89,10 @@ func TestPickWithStubSpawner(t *testing.T) {
 				t.Errorf("args missing %q: %s", want, joined)
 			}
 		}
+		// Regression: --nth=2.. must NOT be present (broke search on 2-field lines).
+		if strings.Contains(joined, "--nth=") {
+			t.Errorf("args should not include --nth (breaks 2-field matching): %s", joined)
+		}
 		// Simulate user pressing Enter on the only item.
 		return []byte("\nfoo\nattach\x1falpha\x1f/dev\t● alpha\n"), 0, nil
 	}
@@ -118,5 +123,81 @@ func TestPickQueryPrefill(t *testing.T) {
 	r, _ := Pick(context.Background(), spec, stub)
 	if !r.IsTypeToCreate() || r.Query != "testo" {
 		t.Errorf("expected type-to-create with query=testo; got %+v", r)
+	}
+}
+
+// TestRealFZFMatching is the regression net for the args→fzf interaction.
+// Stub-driven tests proved that --print-query rc-trap works at the binary
+// level, but we shipped a bug where --with-nth=2.. + --nth=2.. on
+// 2-field lines silently returned zero matches (issue caught after the
+// dir-picker basename-column was dropped). This test invokes real fzf in
+// --filter mode against the args we'd ship and asserts the search hits.
+func TestRealFZFMatching(t *testing.T) {
+	if _, err := exec.LookPath("fzf"); err != nil {
+		t.Skip("fzf not on PATH; skipping real-fzf integration test")
+	}
+
+	cases := []struct {
+		name  string
+		lines []string // fzf input
+		query string
+		want  string // expected substring in fzf output
+	}{
+		{
+			name: "2-field projects line",
+			lines: []string{
+				"attach\x1fcodex-lb\x1f/U/yk/dev/codex-lb\t~/dev/codex-lb",
+				"attach\x1fdocs\x1f/U/yk/dev/docs\t~/dev/docs",
+			},
+			query: "codex",
+			want:  "~/dev/codex-lb",
+		},
+		{
+			name: "4-field sessions line",
+			lines: []string{
+				"attach\x1falpha\x1f/dev/alpha\t●\talpha\t(3w, 5m ago)",
+				"attach\x1fbeta\x1f/dev/beta\t○\tbeta\t(1w, 2h ago)",
+			},
+			query: "alpha",
+			want:  "alpha",
+		},
+		{
+			name: "single-letter substring on 2-field",
+			lines: []string{
+				"attach\x1fa\x1f/p\t~/dev/codex",
+				"attach\x1fb\x1f/p\t~/dev/iptv",
+			},
+			query: "c",
+			want:  "codex",
+		},
+		{
+			name: "encoded field 1 must NOT leak into search",
+			lines: []string{
+				"attach\x1fSECRETWORD\x1f/p\t~/dev/proj",
+			},
+			query: "SECRETWORD",
+			want:  "", // expect zero matches
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := buildArgs(Spec{}) // no print-query, no expect — pure args
+			args = append(args, "--filter="+tc.query)
+			cmd := exec.Command("fzf", args...)
+			cmd.Stdin = strings.NewReader(strings.Join(tc.lines, "\n") + "\n")
+			out, _ := cmd.Output() // rc=1 on no match is fine; we just check stdout
+			got := string(out)
+			if tc.want == "" {
+				if strings.TrimSpace(got) != "" {
+					t.Errorf("expected no matches; got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("query %q: expected output to contain %q; got %q",
+					tc.query, tc.want, got)
+			}
+		})
 	}
 }
