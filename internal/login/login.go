@@ -65,7 +65,7 @@ func Run(ctx context.Context) error {
 		lines = append(lines, picker.Encode(it))
 	}
 
-	// Ctrl-X is now an in-place kill: fzf executes our hidden `_action`
+	// Ctrl-K is an in-place kill: fzf executes our hidden `_action`
 	// subcommand to kill the highlighted session, then reloads its line
 	// list, then drops the cursor on position 2 (first real session
 	// after the [skip] sentinel) so chained kills work without the
@@ -73,12 +73,12 @@ func Run(ctx context.Context) error {
 	selfBin := selfBinaryPath()
 	binds := []string{
 		fmt.Sprintf(
-			"ctrl-x:execute-silent(%s _action --kill {})+reload(%s _action --list)+pos(2)",
+			"ctrl-k:execute-silent(%s _action --kill {})+reload(%s _action --list)+pos(2)",
 			selfBin, selfBin,
 		),
 	}
 
-	header := picker.HeaderFor("login", "enter=attach/create  c-x=kill (in place)  esc=plain shell")
+	header := picker.HeaderFor("login", "enter=attach/create  c-k=kill (in place)  esc=plain shell")
 	r, err := picker.Pick(ctx, picker.Spec{
 		Prompt:     "tmux session > ",
 		Header:     header,

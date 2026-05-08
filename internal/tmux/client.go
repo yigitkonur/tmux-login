@@ -1,5 +1,5 @@
 // Package tmux is a thin os/exec wrapper around the tmux binary. With sesh
-// as the session engine, this package only handles ctrl-x kill (kill-
+// as the session engine, this package only handles ctrl-k kill (kill-
 // session), the type-to-create attach idiom (new-session -d + send-keys
 // cwd-lock + execve into tmux attach), and `tmux -V` / `tmux show -gv`
 // queries used by the doctor diagnostic.

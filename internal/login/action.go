@@ -1,8 +1,8 @@
 // action.go implements the hidden `_action` subcommand. fzf's `--bind`
 // invokes it from inside the picker (execute-silent / reload) so the
-// picker stays open and re-renders in place when you press Ctrl-X. This
+// picker stays open and re-renders in place when you press Ctrl-K. This
 // avoids the flicker of the picker exiting and re-spawning that the
-// older --expect=ctrl-x path caused.
+// older --expect-based path caused.
 //
 // Subcommands (all read-only argv records — no user-facing output):
 //
