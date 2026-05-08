@@ -191,10 +191,19 @@ if [ -z "$src_bin" ]; then
   src_bin="$script_dir/bin/$BIN_NAME"
 fi
 
-# Place binary and share files.
+# Place binary and share files. Remove the destination first so we get a
+# fresh inode — overwriting in place on macOS makes Gatekeeper's cached
+# verdict for the old bytes mismatch the new bytes, which presents as a
+# SIGKILL on the next exec. rm-then-cp dodges the cache entirely.
 mkdir -p -- "$prefix/bin" "$prefix/share"
+rm -f -- "$prefix/bin/$BIN_NAME"
 cp -- "$src_bin" "$prefix/bin/$BIN_NAME"
 chmod +x "$prefix/bin/$BIN_NAME"
+# Ad-hoc codesign on macOS so re-installs over a long-lived path don't
+# trip the same Gatekeeper cache. Harmless on Linux (codesign absent).
+if [ "$os" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$prefix/bin/$BIN_NAME" 2>/dev/null || true
+fi
 info "installed binary at $prefix/bin/$BIN_NAME"
 
 # PATH symlink: $prefix/bin is rarely on PATH, but ~/.local/bin is XDG-blessed
