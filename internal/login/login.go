@@ -13,6 +13,7 @@ import (
 	"github.com/yigitkonur/tmux-login/internal/config"
 	"github.com/yigitkonur/tmux-login/internal/perf"
 	"github.com/yigitkonur/tmux-login/internal/picker"
+	"github.com/yigitkonur/tmux-login/internal/sesh"
 	"github.com/yigitkonur/tmux-login/internal/sources"
 	"github.com/yigitkonur/tmux-login/internal/tmux"
 )
@@ -38,24 +39,31 @@ func Run(ctx context.Context) error {
 
 	c := cache.New(cfg.CacheDir)
 	tx := tmux.New()
+	sx := sesh.New()
+	useSesh := sx.Available()
+	tr.Mark("engine", "sesh=", useSesh)
 
 	// Loop so ctrl-x can kill the highlighted session and re-render the
 	// list. Every other terminal action (attach, type-to-create, skip,
 	// cancel) returns immediately.
 	for {
-		sessions, err := (&sources.Sessions{Tmux: tx, Cache: c}).Items(ctx)
+		sessions, err := buildSessionItems(ctx, useSesh, sx, tx, c)
 		if err != nil {
 			// Soft-fail: present an empty list rather than erroring out the login.
-			fmt.Fprintf(os.Stderr, "tmux-login: list-sessions: %v\n", err)
+			fmt.Fprintf(os.Stderr, "tmux-login: list: %v\n", err)
 		}
 		tr.Mark("list_done", "n=", len(sessions))
 
-		// Phantom-cache GC.
-		liveNames := make([]string, 0, len(sessions))
-		for _, s := range sessions {
-			liveNames = append(liveNames, s.Target)
+		// Phantom-cache GC. Only meaningful for the no-sesh path (sesh manages
+		// its own state); skip when sesh is active to avoid GC'ing entries
+		// keyed by sesh's path-style targets.
+		if !useSesh {
+			liveNames := make([]string, 0, len(sessions))
+			for _, s := range sessions {
+				liveNames = append(liveNames, s.Target)
+			}
+			c.GC(liveNames, err == nil)
 		}
-		c.GC(liveNames, err == nil)
 
 		lines := []string{picker.EncodeSkip()}
 		for _, it := range sessions {
@@ -82,10 +90,12 @@ func Run(ctx context.Context) error {
 
 		parsed := r.Parsed()
 
-		// Ctrl-X: kill the highlighted session, then re-render. No-op if
-		// the cursor is on the [skip] sentinel or no row is selected.
+		// Ctrl-X: kill the highlighted session, then re-render. Always uses
+		// tmux directly — sesh has no kill subcommand. No-op when the
+		// cursor is on the [skip] sentinel or a non-tmux entry (a zoxide
+		// path that hasn't been promoted to a session yet).
 		if r.Key == "ctrl-x" {
-			if parsed.OK && parsed.Action == "attach" {
+			if parsed.OK && parsed.Action == "attach" && tx.HasSession(ctx, parsed.Target) {
 				if killErr := tx.KillSession(ctx, parsed.Target); killErr != nil {
 					fmt.Fprintf(os.Stderr, "tmux-login: kill %q: %v\n", parsed.Target, killErr)
 				}
@@ -100,6 +110,15 @@ func Run(ctx context.Context) error {
 			return nil
 
 		case parsed.OK && parsed.Action == "attach":
+			// sesh handles idempotent connect (creates if missing, attaches
+			// if existing, resolves zoxide paths to session names). For the
+			// no-sesh path we use the existing tmux.AttachSpec flow.
+			if useSesh {
+				if err := sx.Connect(ctx, parsed.Target); err != nil {
+					fmt.Fprintf(os.Stderr, "tmux-login: sesh connect: %v\n", err)
+				}
+				return nil
+			}
 			spec := tmux.AttachSpec{Name: parsed.Target, Cwd: parsed.Cwd}
 			if err := dispatchAttach(ctx, tx, c, spec); err != nil {
 				fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
@@ -107,7 +126,12 @@ func Run(ctx context.Context) error {
 			return nil
 
 		case r.IsTypeToCreate():
-			// Second fzf round: pick a starting directory.
+			// Type-to-create: user typed a name fzf didn't match, hit Enter.
+			// We always run our dir picker (regardless of sesh availability)
+			// because the user picked an explicit name that needs an explicit
+			// dir; sesh's name→cwd resolution would default to $HOME, which
+			// isn't what we want here. After dir is chosen, attach via the
+			// existing tmux path that takes -c <DIR>.
 			dir, err := pickDirectory(ctx, cfg, c, r.Query)
 			if err != nil || dir == "" {
 				return nil
@@ -122,6 +146,48 @@ func Run(ctx context.Context) error {
 		// No actionable result; treat as cancel.
 		return nil
 	}
+}
+
+// buildSessionItems returns the items to feed the picker. With sesh
+// available we get its multi-source list (tmux + zoxide + sesh.toml +
+// tmuxinator) with Nerd Font icons; otherwise we fall back to the
+// internal sources.Sessions list (tmux only).
+func buildSessionItems(ctx context.Context, useSesh bool, sx *sesh.Client, tx *tmux.Client, c *cache.Cache) ([]sources.Item, error) {
+	if useSesh {
+		seshItems, err := sx.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]sources.Item, 0, len(seshItems))
+		for _, si := range seshItems {
+			out = append(out, sources.Item{
+				Mode:       sources.ModeSessions,
+				Display:    si.Display,
+				ActionKind: sources.ActionAttach,
+				Target:     si.Target,
+				// Cwd left empty; sesh resolves it from name.
+			})
+		}
+		return out, nil
+	}
+	return (&sources.Sessions{Tmux: tx, Cache: c}).Items(ctx)
+}
+
+// RunLast jumps to the last-attached session. Wired to `tmux-login last`
+// (cmd dispatcher) and to the M-L keybinding in share/tmux.conf.
+// When sesh isn't available, prints a diagnostic to stderr — there's no
+// equivalent in our internal code path (tmux's own buffer doesn't track
+// session attach order without server hooks).
+func RunLast(ctx context.Context) error {
+	sx := sesh.New()
+	if !sx.Available() {
+		fmt.Fprintln(os.Stderr, "tmux-login: `last` requires sesh — install via `brew install sesh`")
+		return nil
+	}
+	if err := sx.Last(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "tmux-login: sesh last: %v\n", err)
+	}
+	return nil
 }
 
 func dispatchAttach(ctx context.Context, tx *tmux.Client, c *cache.Cache, spec tmux.AttachSpec) error {

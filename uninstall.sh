@@ -98,10 +98,22 @@ done
 if [ -d "$prefix" ]; then
   rm -f -- "$prefix/bin/tmux-login"
   rm -f -- "$prefix/share/tmux.conf" "$prefix/share/tmux-login.tmux" "$prefix/share/login-hook.zsh"
+  # share/plugins/ contains either git clones (vendored copies) or
+  # symlinks back to TPM-managed copies. rm -rf on the dir is safe in both
+  # cases — symlinks don't follow into ~/.tmux/plugins, only the link
+  # itself is removed.
+  rm -rf -- "$prefix/share/plugins"
   rmdir -- "$prefix/bin" 2>/dev/null || true
   rmdir -- "$prefix/share" 2>/dev/null || true
   rmdir -- "$prefix" 2>/dev/null || true
   info "removed $prefix"
+fi
+
+# Friendly note when the user has TPM-managed copies of resurrect /
+# continuum at the canonical TPM path. We never touched those — they're
+# managed by the user's own tmux plugin chain.
+if [ -d "$HOME/.tmux/plugins/tmux-continuum" ] || [ -d "$HOME/.tmux/plugins/tmux-resurrect" ]; then
+  info "note: TPM-installed tmux-resurrect/continuum at \$HOME/.tmux/plugins/ (untouched)"
 fi
 
 if [ "$keep_state" -eq 0 ]; then

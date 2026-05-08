@@ -101,8 +101,9 @@ case "$os" in
       tmux_cmd="brew install tmux"
       fzf_cmd="brew install fzf"
       go_cmd="brew install go"
+      sesh_cmd="brew install sesh"
     else
-      tmux_cmd=""; fzf_cmd=""; go_cmd=""
+      tmux_cmd=""; fzf_cmd=""; go_cmd=""; sesh_cmd=""
     fi
     ;;
   Linux)
@@ -110,20 +111,23 @@ case "$os" in
       tmux_cmd="sudo apt-get update -qq && sudo apt-get install -y tmux"
       fzf_cmd="sudo apt-get update -qq && sudo apt-get install -y fzf"
       go_cmd="sudo apt-get update -qq && sudo apt-get install -y golang-go"
+      sesh_cmd=""  # not in apt; users install via 'go install' or homebrew-on-linux
     elif command -v dnf >/dev/null 2>&1; then
       tmux_cmd="sudo dnf install -y tmux"
       fzf_cmd="sudo dnf install -y fzf"
       go_cmd="sudo dnf install -y golang"
+      sesh_cmd=""
     elif command -v pacman >/dev/null 2>&1; then
       tmux_cmd="sudo pacman -S --noconfirm tmux"
       fzf_cmd="sudo pacman -S --noconfirm fzf"
       go_cmd="sudo pacman -S --noconfirm go"
+      sesh_cmd="yay -S --noconfirm sesh-bin"  # AUR
     else
-      tmux_cmd=""; fzf_cmd=""; go_cmd=""
+      tmux_cmd=""; fzf_cmd=""; go_cmd=""; sesh_cmd=""
     fi
     ;;
   *)
-    tmux_cmd=""; fzf_cmd=""; go_cmd=""
+    tmux_cmd=""; fzf_cmd=""; go_cmd=""; sesh_cmd=""
     ;;
 esac
 
@@ -151,6 +155,10 @@ ensure_dep() {
 
 ensure_dep tmux "$tmux_cmd" 1 || true
 ensure_dep fzf  "$fzf_cmd"  1 || true
+# sesh is OPTIONAL but strongly recommended — gives multi-source list
+# (zoxide, sesh.toml configs) + Nerd Font icons + idempotent connect.
+# Falls back to internal session-list when absent.
+ensure_dep sesh "$sesh_cmd" 0 || true
 
 # Locate the source tree (clone) or download tarball when run via curl-pipe.
 script_dir=""
@@ -225,14 +233,61 @@ else
 fi
 
 for f in $SHARE_FILES; do
-  if [ -f "$src_share/$f" ]; then
-    cp -- "$src_share/$f" "$prefix/share/$f"
-  else
+  if [ ! -f "$src_share/$f" ]; then
     warn "missing source file: $src_share/$f"
+    continue
   fi
+  # tmux.conf carries a {{PREFIX}} sentinel so the run-shell lines for
+  # vendored plugins use absolute paths (tmux's run-shell can't expand
+  # shell vars at parse time on all versions). Substitute in-flight.
+  case "$f" in
+    tmux.conf)
+      sed -e "s|{{PREFIX}}|$prefix|g" "$src_share/$f" > "$prefix/share/$f"
+      ;;
+    *)
+      cp -- "$src_share/$f" "$prefix/share/$f"
+      ;;
+  esac
 done
 chmod +x "$prefix/share/login-hook.zsh" "$prefix/share/tmux-login.tmux" 2>/dev/null || true
 info "installed share files at $prefix/share"
+
+# Vendor tmux-resurrect + tmux-continuum unless they're already present
+# under TPM (~/.tmux/plugins/) or already vendored. git-clone shallow.
+# share/tmux.conf source-loads from $prefix/share/plugins/, so if the
+# user has TPM copies under ~/.tmux/plugins/, our load and theirs may
+# both fire — tmux-continuum's multi-server precedence handles it
+# (only the first-started server saves/restores). The most likely user
+# install (no TPM) gets a single load from our prefix.
+plugins_dir="$prefix/share/plugins"
+mkdir -p -- "$plugins_dir"
+for plugin_pair in 'tmux-resurrect|https://github.com/tmux-plugins/tmux-resurrect' \
+                   'tmux-continuum|https://github.com/tmux-plugins/tmux-continuum'; do
+  pname=${plugin_pair%%|*}
+  purl=${plugin_pair##*|}
+  if [ -d "$HOME/.tmux/plugins/$pname" ]; then
+    info "$pname already installed via TPM at \$HOME/.tmux/plugins/$pname (skipping vendored copy)"
+    # Still place a thin symlink so $prefix/share/plugins/$pname/$pname.tmux
+    # resolves; otherwise the run-shell line in share/tmux.conf misses.
+    rm -rf -- "${plugins_dir:?}/${pname:?}"
+    ln -sf -- "$HOME/.tmux/plugins/$pname" "$plugins_dir/$pname"
+    continue
+  fi
+  if [ -d "$plugins_dir/$pname/.git" ]; then
+    # Already vendored by a previous run — cheap pull-update, optional.
+    ( cd "$plugins_dir/$pname" && git pull --quiet --ff-only 2>/dev/null ) || true
+    info "$pname: already vendored (kept up to date)"
+    continue
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    warn "$pname: git not on PATH — skip vendoring; the persistence layer will be inactive"
+    continue
+  fi
+  info "vendoring $pname → $plugins_dir/$pname"
+  rm -rf -- "${plugins_dir:?}/${pname:?}"
+  git clone --depth 1 --quiet "$purl" "$plugins_dir/$pname" 2>/dev/null \
+    || warn "$pname: clone failed; persistence layer will be inactive"
+done
 
 # Wire marker blocks via the Go binary so the awk/regex contract lives in one
 # place. install-hooks is idempotent.

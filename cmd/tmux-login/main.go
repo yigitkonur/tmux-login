@@ -37,6 +37,8 @@ func main() {
 		err = runAttach(ctx, args)
 	case "login":
 		err = login.Run(ctx)
+	case "last":
+		err = login.RunLast(ctx)
 	case "kill":
 		err = runKill(ctx, args)
 	case "install-hooks":
@@ -218,6 +220,7 @@ usage:
   tmux-login pick [--mode sessions] [--no-popup]
   tmux-login attach NAME [--cwd DIR] [--detach]
   tmux-login login                       # called by the zsh hook on SSH login
+  tmux-login last                        # jump to the previous session (via sesh)
   tmux-login kill NAME
   tmux-login install-hooks --tmux|--zsh [--prefix PATH] [--dry-run]
   tmux-login doctor

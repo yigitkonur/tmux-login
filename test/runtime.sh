@@ -25,10 +25,17 @@ setup() {
   mkdir -p -- "$shimdir"
   cp "$FIX/tmux-stub.sh" "$shimdir/tmux"
   cp "$FIX/fzf-stub.sh"  "$shimdir/fzf"
-  chmod +x "$shimdir/tmux" "$shimdir/fzf"
+  cp "$FIX/sesh-stub.sh" "$shimdir/sesh"
+  chmod +x "$shimdir/tmux" "$shimdir/fzf" "$shimdir/sesh"
 
   RUN_LOG="$tmp/tmux.argv.log"
   : > "$RUN_LOG"
+
+  # Most existing cases run against the no-sesh code path. Disable sesh
+  # by default by pointing SESH_BIN at a missing path; tests that want
+  # sesh active export SESH_BIN="$shimdir/sesh" themselves.
+  SESH_BIN="/no/such/sesh"
+  export SESH_BIN
 
   FZF_OUTPUTS_DIR="$tmp/fzf-out"
   FZF_RC_DIR="$tmp/fzf-rc"
@@ -414,6 +421,139 @@ case_ctrlx_on_skip() {
   teardown
 }
 
+# ─── sesh-engine cases ──────────────────────────────────────────────────────
+# When sesh is on PATH, the binary uses sesh's multi-source list and routes
+# attaches through `sesh connect`. ctrl-x kill still goes to tmux directly.
+
+# --- 14. sesh-engine: pick existing session, attach via sesh connect --------
+case_sesh_engine_attach_existing() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  printf '\x1b[34m \x1b[39m alpha\n\x1b[36m \x1b[39m ~/dev/proj\n' > "$MOCK_SESH_LIST"
+  export SESH_BIN MOCK_SESH_LIST
+
+  # fzf #1: user picks the alpha row. The encoded display is what the
+  # binary built from sesh's output (raw ANSI line preserved as Display).
+  printf '\n\nattach\x1falpha\x1f\t\x1b[34m \x1b[39m alpha\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  # Must call sesh list first, then sesh connect alpha.
+  assert_argv_line_has "$RUN_LOG" "sesh list --icons" || return 1
+  assert_argv_line_has "$RUN_LOG" "sesh connect alpha" || return 1
+  # MUST NOT fall back to tmux new-session.
+  if grep -F "tmux new-session" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: tmux new-session called when sesh-engine active"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 15. sesh-engine: type-to-create still uses our dir picker -------------
+case_sesh_engine_type_to_create() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  : > "$MOCK_SESH_LIST"   # sesh sees zero items
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export SESH_BIN MOCK_SESH_LIST TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev/realdir"
+
+  # fzf #1: --print-query rc=1 (no match), query "newone".
+  printf '\nnewone\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 1 > "$FZF_RC_DIR/1"
+  # fzf #2: dir picker (no --expect), pick realdir.
+  printf '\nattach\x1fnewone\x1f%s\trealdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/2"
+  echo 0 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  # Type-to-create flow goes through our tmux path (NOT sesh) because we
+  # need to honour the explicit dir choice from the dir picker.
+  assert_argv_line_has "$RUN_LOG" "tmux new-session -d -s newone -c $tmp/dev/realdir" || return 1
+  if grep -F "sesh connect" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: sesh connect called for type-to-create (should use our tmux path)"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 16. sesh-engine: ctrl-x kill still goes through tmux directly ---------
+case_sesh_engine_ctrlx_kill() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  printf '\x1b[34m \x1b[39m alpha\n' > "$MOCK_SESH_LIST"
+  MOCK_TMUX_HAS_SESSIONS="alpha"
+  export SESH_BIN MOCK_SESH_LIST MOCK_TMUX_HAS_SESSIONS
+
+  # ctrl-x on alpha → kill, re-render.
+  printf 'ctrl-x\n\nattach\x1falpha\x1f\t alpha\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+  # After re-render: cancel.
+  printf '\n\n' > "$FZF_OUTPUTS_DIR/2"
+  echo 130 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  # Kill goes via tmux (sesh has no kill).
+  assert_argv_line_has "$RUN_LOG" "tmux kill-session -t =alpha" || return 1
+  if grep -F "sesh connect" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: sesh connect called during a kill flow"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 17. sesh unavailable → original code path runs ------------------------
+case_sesh_unavailable_fallback() {
+  setup
+  # SESH_BIN already set to /no/such/sesh in setup(). Confirm we still
+  # exercise the tmux session-list + tmux new-session path that v0.1 used.
+  echo "alpha	1	1700000000	/tmp	2" > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  MOCK_TMUX_HAS_SESSIONS="alpha"
+  export MOCK_TMUX_LIST_SESSIONS MOCK_TMUX_HAS_SESSIONS
+
+  printf '\n\nattach\x1falpha\x1f/tmp\t● alpha\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  # Must NOT have called sesh.
+  if grep -F "sesh list" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: sesh list called when SESH_BIN missing"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  if grep -F "sesh connect" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "regression: sesh connect called when SESH_BIN missing"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  # And the tmux attach path fired as before.
+  assert_argv_line_has "$RUN_LOG" "tmux attach -t =alpha" || return 1
+  teardown
+}
+
+# --- 18. tmux-login last subcommand routes to sesh last --------------------
+case_last_subcommand() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  export SESH_BIN
+
+  "$BIN" last
+
+  assert_argv_line_has "$RUN_LOG" "sesh last" || return 1
+  teardown
+}
+
 echo "test/runtime.sh: running cases ..."
 run_case "attach-existing"                  case_attach_existing
 run_case "fresh-attach sends cd lock"       case_attach_fresh_sends_cd
@@ -430,6 +570,11 @@ run_case "install-hooks --dry-run"          case_install_hooks_dry_run
 run_case "install-hooks idempotent"         case_install_hooks_idempotent
 run_case "ctrl-x kill then re-pick"         case_ctrlx_kill
 run_case "ctrl-x on [skip] is a no-op"      case_ctrlx_on_skip
+run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
+run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
+run_case "sesh-engine ctrl-x kill"          case_sesh_engine_ctrlx_kill
+run_case "sesh unavailable falls back"      case_sesh_unavailable_fallback
+run_case "tmux-login last subcommand"       case_last_subcommand
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
