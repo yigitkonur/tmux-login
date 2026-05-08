@@ -1,11 +1,12 @@
-/bin/
-/dist/
-*.test
-*.out
-.DS_Store
-coverage.out
-coverage.html
 
-# whitelists override the user's global ~/.gitignore (which filters dotted dirs)
 !.githooks/
 !.githooks/**
+.DS_Store
+*.out
+*.test
+/bin/
+/dist/
+# whitelists override the user's global ~/.gitignore (which filters dotted dirs)
+coverage.html
+coverage.out
+test/.DS_Store
