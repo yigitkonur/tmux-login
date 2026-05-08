@@ -181,8 +181,20 @@ if [ -n "$script_dir" ] && [ -d "$script_dir/share" ]; then
   fi
   info "installing from local clone ($script_dir)"
 else
-  # curl-pipe path: not supported in v0.1; we'd need a release tarball.
-  die "remote install (curl|sh) not supported in v0.1 — clone the repo and run sh install.sh"
+  # curl-pipe path: $0 is "sh" or similar, no local clone. Shallow-clone
+  # to a temp dir, build there, throw the clone away. Users who want the
+  # source later can `git clone https://github.com/yigitkonur/tmux-login`
+  # to wherever they prefer — we don't pollute the filesystem with a
+  # permanent source dir.
+  command -v git >/dev/null 2>&1 || die "git not on PATH — install git or run install.sh from a clone"
+  _clonedir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-login-src.XXXXXX") || die "mktemp failed"
+  trap 'rm -rf -- "$_clonedir"' EXIT
+  info "fetching source to $_clonedir"
+  git clone --depth 1 --quiet "https://github.com/yigitkonur/tmux-login.git" "$_clonedir" \
+    || die "git clone failed (check network / proxy)"
+  script_dir="$_clonedir"
+  src_share="$_clonedir/share"
+  info "installing from fresh clone"
 fi
 
 # Build binary if not provided.

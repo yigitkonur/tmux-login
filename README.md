@@ -82,16 +82,30 @@ you're in `~/dev/testo`.
 
 ## install
 
-requires **tmux 3.4+**, **fzf 0.55+**, **zsh**, and (at install time
-only) **go 1.22+** for the build.
+requires **tmux 3.4+**, **fzf 0.55+**, **sesh 2.x** (`brew install sesh`),
+**zsh**, and (at install time only) **go 1.22+** for the build. on macOS
+the installer brew-installs missing deps automatically.
+
+**one-liner** (recommended):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yigitkonur/tmux-login/main/install.sh | sh
+```
+
+clones the source to a temp dir, builds with `go build`, drops the
+binary at `~/.local/share/tmux-login/bin/tmux-login`, symlinks to
+`~/.local/bin/tmux-login`, vendors tmux-resurrect + tmux-continuum,
+writes the marker blocks. throws the temp clone away when done. open
+a new shell (or `tmux source-file ~/.tmux.conf`) and you're in.
+
+**from a clone** (if you want the source for hacking):
 
 ```sh
 git clone https://github.com/yigitkonur/tmux-login ~/dev/tmux-login
-cd ~/dev/tmux-login
-make install
+cd ~/dev/tmux-login && make install
 ```
 
-flags:
+flags (apply to both forms — pass after `sh -s --` for the curl-pipe form):
 
 | flag | meaning |
 | --- | --- |
