@@ -20,14 +20,25 @@ type Client struct {
 
 // New returns a client. If the TMUX_BIN env var is set, that path is used;
 // otherwise PATH lookup. Tests inject TMUX_BIN to point at a stub.
+//
+// We DO NOT override LANG/LC_ALL here. Originally we set LC_ALL=C "to keep
+// tmux -V parseable across locales" — that was overcautious. The real cost
+// is that tmux 3.6 treats LC_ALL=C as "single-byte ASCII only" and sanitizes
+// every non-ASCII byte (including \t in -F format output) to `_`. Worse,
+// the locale propagates to the tmux SERVER process — so every pane the
+// server later spawns inherits the broken locale, mangling UTF-8 glyphs in
+// every app the user runs (Claude Code's progress bars, vim's box drawing,
+// anything with non-ASCII output renders as `___`).
+//
+// Inherit whatever locale the user has. If they have no locale set, tmux
+// falls back internally to a sane default. Format output uses real \t bytes
+// regardless.
 func New() *Client {
 	bin := os.Getenv("TMUX_BIN")
 	if bin == "" {
 		bin = "tmux"
 	}
-	// LANG=C keeps `tmux -V` and friends parseable across locales.
-	env := append(os.Environ(), "LANG=C", "LC_ALL=C")
-	return &Client{bin: bin, env: env}
+	return &Client{bin: bin, env: os.Environ()}
 }
 
 // Cmd builds an exec.Cmd with the configured binary, env, and stderr wired
