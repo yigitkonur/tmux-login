@@ -190,6 +190,33 @@ case_type_to_create_auto_mkdir() {
   teardown
 }
 
+# --- 3c. dir type-to-create rejects unsafe names ---------------------------
+case_type_to_create_rejects_unsafe_dir() {
+  setup
+  : > "$tmp/sessions"
+  MOCK_TMUX_LIST_SESSIONS="$tmp/sessions"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export MOCK_TMUX_LIST_SESSIONS TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev"
+
+  printf 'newproj\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 1 > "$FZF_RC_DIR/1"
+  echo "../escape" > "$FZF_OUTPUTS_DIR/2"
+  echo 1 > "$FZF_RC_DIR/2"
+
+  "$BIN" login
+
+  [ ! -d "$tmp/escape" ] || { echo "unsafe query created directory outside root"; return 1; }
+  [ ! -d "$tmp/dev/../escape" ] || { echo "unsafe query created escaped directory"; return 1; }
+  if grep -Fq "new-session" "$RUN_LOG"; then
+    echo "unsafe directory query still attached a tmux session"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
 # --- 4. dash-prefixed name --------------------------------------------------
 case_dash_prefixed_name() {
   setup
@@ -586,6 +613,26 @@ case_action_list_emits_encoded_lines() {
   teardown
 }
 
+# --- 16d. _action --list preserves picker ordering on reload ---------------
+case_action_list_orders_live_then_projects() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export SESH_BIN MOCK_SESH_LIST TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev/alpha"
+  printf '[{"Src":"zoxide","Name":"~/misc","Path":"%s","Attached":0,"Windows":0},{"Src":"tmux","Name":"live","Path":"%s","Attached":0,"Windows":1}]\n' "$tmp/misc" "$tmp/dev/live" > "$MOCK_SESH_LIST"
+
+  out=$("$BIN" _action --list 2>&1)
+
+  second=$(printf '%s\n' "$out" | sed -n '2p')
+  third=$(printf '%s\n' "$out" | sed -n '3p')
+  echo "$second" | grep -Fq "live" || { echo "_action --list did not put live session first"; echo "$out"; return 1; }
+  echo "$third" | grep -Fq " ~/dev/alpha" || { echo "_action --list did not put project after live session"; echo "$out"; return 1; }
+  teardown
+}
+
 # Note: there is no "sesh unavailable fallback" anymore (v0.3). If sesh
 # isn't on PATH, the binary prints a clear stderr message and exits.
 
@@ -605,6 +652,7 @@ echo "test/runtime.sh: running cases ..."
 run_case "fresh-attach sends cd lock"       case_attach_fresh_sends_cd
 run_case "type-to-create"                   case_type_to_create
 run_case "type-to-create-auto-mkdir"        case_type_to_create_auto_mkdir
+run_case "type-to-create rejects unsafe dir" case_type_to_create_rejects_unsafe_dir
 run_case "dash-prefixed-name"               case_dash_prefixed_name
 run_case "esc-with-query (no create)"       case_esc_with_query
 run_case "TMUX_LOGIN_SKIP=1 short-circuit"  case_skip_short_circuit
@@ -618,6 +666,7 @@ run_case "_action --kill on sentinel"       case_action_kill_on_sentinel
 run_case "_action --kill real session"      case_action_kill_real_session
 run_case "_action --kill zoxide path"       case_action_kill_zoxide_path
 run_case "_action --list emits lines"       case_action_list_emits_encoded_lines
+run_case "_action --list preserves order"   case_action_list_orders_live_then_projects
 run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
 run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
 run_case "project existing locks cwd"       case_project_existing_session_locks_cwd

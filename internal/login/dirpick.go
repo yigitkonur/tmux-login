@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
 	"github.com/yigitkonur/tmux-login/internal/config"
@@ -76,7 +77,11 @@ func pickDirectory(ctx context.Context, cfg *config.Config, c *cache.Cache, sess
 		if len(cfg.Roots) > 0 {
 			base = cfg.Roots[0]
 		}
-		target := filepath.Join(base, r.Query)
+		name := cleanDirCreateName(r.Query)
+		if name == "" {
+			return "", nil
+		}
+		target := filepath.Join(base, name)
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return "", err
 		}
@@ -87,4 +92,15 @@ func pickDirectory(ctx context.Context, cfg *config.Config, c *cache.Cache, sess
 		return "", nil
 	}
 	return r.Parsed().Cwd, nil
+}
+
+func cleanDirCreateName(query string) string {
+	name := strings.TrimSpace(query)
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`+"\x00") {
+		return ""
+	}
+	return name
 }
