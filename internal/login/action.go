@@ -21,13 +21,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
 	"github.com/yigitkonur/tmux-login/internal/config"
 	"github.com/yigitkonur/tmux-login/internal/picker"
 	"github.com/yigitkonur/tmux-login/internal/sesh"
-	"github.com/yigitkonur/tmux-login/internal/sources"
 	"github.com/yigitkonur/tmux-login/internal/tmux"
 )
 
@@ -51,24 +51,20 @@ func RunAction(ctx context.Context, args []string) error {
 }
 
 func emitList(ctx context.Context) error {
+	cfg := config.Load()
+	c := cache.New(cfg.CacheDir)
 	sx := sesh.New()
 	if !sx.Available() {
 		return nil
 	}
-	items, err := sx.List(ctx)
+	items, err := buildItems(ctx, sx, cfg, c)
 	if err != nil {
 		return nil // soft-fail: empty list is fine for fzf reload
 	}
 	out := make([]string, 0, len(items)+1)
 	out = append(out, picker.EncodeSkip())
-	for _, si := range items {
-		out = append(out, picker.Encode(sources.Item{
-			Mode:       sources.ModeProjects,
-			Display:    si.Display,
-			ActionKind: sources.ActionAttach,
-			Target:     si.Target,
-			Cwd:        si.Path,
-		}))
+	for _, it := range items {
+		out = append(out, picker.Encode(it))
 	}
 	fmt.Println(strings.Join(out, "\n"))
 	return nil
@@ -86,7 +82,7 @@ func killHighlighted(ctx context.Context, rest []string) error {
 		return nil
 	}
 	line := strings.Join(rest, " ")
-	action, target, _, _, ok := picker.Decode(line)
+	action, target, cwd, _, ok := picker.Decode(line)
 	if !ok {
 		return nil
 	}
@@ -95,7 +91,14 @@ func killHighlighted(ctx context.Context, rest []string) error {
 	}
 	tx := tmux.New()
 	if !tx.HasSession(ctx, target) {
-		return nil // zoxide path or stale entry — silently skip
+		if cwd != "" {
+			target = strings.ReplaceAll(filepath.Base(cwd), ".", "_")
+			if !tx.HasSession(ctx, target) {
+				return nil
+			}
+		} else {
+			return nil // zoxide path or stale entry — silently skip
+		}
 	}
 	if err := tx.KillSession(ctx, target); err != nil {
 		fmt.Fprintf(os.Stderr, "tmux-login: kill %q: %v\n", target, err)

@@ -12,6 +12,9 @@ import (
 type AttachSpec struct {
 	Name string
 	Cwd  string
+	// ForceCwd sends a cwd-lock command even when the session already exists.
+	// Use only for explicit project-directory picker rows.
+	ForceCwd bool
 	// Detach skips the final attach/switch-client (used for scripting).
 	Detach bool
 }
@@ -58,6 +61,8 @@ func (c *Client) Attach(ctx context.Context, spec AttachSpec) error {
 		if spec.Cwd != "" {
 			c.refreshFreshPaneCwd(ctx, spec.Name, spec.Cwd)
 		}
+	} else if spec.ForceCwd && spec.Cwd != "" {
+		c.refreshFreshPaneCwd(ctx, spec.Name, spec.Cwd)
 	}
 
 	if spec.Detach {

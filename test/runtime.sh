@@ -408,6 +408,52 @@ case_sesh_engine_type_to_create() {
   teardown
 }
 
+# --- 15b. project row for existing session locks cwd -------------------------
+case_project_existing_session_locks_cwd() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  : > "$MOCK_SESH_LIST"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  MOCK_TMUX_HAS_SESSIONS="realdir"
+  export SESH_BIN MOCK_SESH_LIST TMUX_LOGIN_ROOTS MOCK_TMUX_HAS_SESSIONS
+
+  mkdir -p "$tmp/dev/realdir"
+
+  printf '\nattach\x1frealdir\x1f%s\t ~/dev/realdir\n' "$tmp/dev/realdir" > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  if ! grep -F "send-keys" "$RUN_LOG" | grep -F "=realdir:." | grep -F "$tmp/dev/realdir" | grep -F "clear" | grep -Fq "Enter"; then
+    echo "existing project row did not lock cwd:"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  assert_argv_line_has "$RUN_LOG" "attach -t =realdir" || return 1
+  teardown
+}
+
+# --- 15c. local project rows do not depend on zoxide -------------------------
+case_local_dev_projects_in_login_picker() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  : > "$MOCK_SESH_LIST"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export SESH_BIN MOCK_SESH_LIST TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev/alpha" "$tmp/dev/beta"
+  printf '\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  grep -Fq " ~/dev/alpha" "$FZF_STDIN_DIR/1" || { echo "missing alpha project row"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  grep -Fq " ~/dev/beta" "$FZF_STDIN_DIR/1" || { echo "missing beta project row"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  teardown
+}
+
 # --- 16. _action --kill on a real session calls tmux kill-session ----------
 # (replaces the older case_sesh_engine_ctrlx_kill that drove a stubbed fzf
 # --expect=ctrl-x flow; the bind path runs the kill via execute-silent in
@@ -503,6 +549,8 @@ run_case "_action --kill zoxide path"       case_action_kill_zoxide_path
 run_case "_action --list emits lines"       case_action_list_emits_encoded_lines
 run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
 run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
+run_case "project existing locks cwd"       case_project_existing_session_locks_cwd
+run_case "local dev projects in picker"     case_local_dev_projects_in_login_picker
 run_case "tmux-login last subcommand"       case_last_subcommand
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"

@@ -228,7 +228,7 @@ func displayJSONItem(row jsonItem) string {
 		}
 		return "○ " + target
 	case "zoxide":
-		return "◆ " + target
+		return " " + target
 	default:
 		return "◇ " + target
 	}

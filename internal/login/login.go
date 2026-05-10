@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
 	"github.com/yigitkonur/tmux-login/internal/config"
@@ -60,7 +62,7 @@ func RunPicker(ctx context.Context, cfg *config.Config, modeLabel string) error 
 		return nil
 	}
 
-	items, err := buildItems(ctx, sx)
+	items, err := buildItems(ctx, sx, cfg, c)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tmux-login: list: %v\n", err)
 	}
@@ -84,7 +86,7 @@ func RunPicker(ctx context.Context, cfg *config.Config, modeLabel string) error 
 		),
 	}
 
-	header := picker.HeaderFor(modeLabel, "enter=attach/create  c-k=kill (in place)  esc=plain shell")
+	header := picker.HeaderFor(modeLabel, "enter=attach/create  ctrl-k=kill (in place)  esc=plain shell")
 	r, err := picker.Pick(ctx, picker.Spec{
 		Prompt:     "tmux session > ",
 		Header:     header,
@@ -110,7 +112,7 @@ func RunPicker(ctx context.Context, cfg *config.Config, modeLabel string) error 
 
 	case parsed.OK && parsed.Action == "attach":
 		if tx.HasSession(ctx, parsed.Target) {
-			spec := tmux.AttachSpec{Name: parsed.Target, Cwd: parsed.Cwd}
+			spec := tmux.AttachSpec{Name: parsed.Target, Cwd: parsed.Cwd, ForceCwd: parsed.Cwd != ""}
 			if err := dispatchAttach(ctx, tx, c, spec); err != nil {
 				fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
 			}
@@ -127,7 +129,7 @@ func RunPicker(ctx context.Context, cfg *config.Config, modeLabel string) error 
 		if err != nil || dir == "" {
 			return nil
 		}
-		spec := tmux.AttachSpec{Name: r.Query, Cwd: dir}
+		spec := tmux.AttachSpec{Name: r.Query, Cwd: dir, ForceCwd: true}
 		if err := dispatchAttach(ctx, tx, c, spec); err != nil {
 			fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
 		}
@@ -185,14 +187,45 @@ func RunLast(ctx context.Context) error {
 // buildItems converts sesh's list output into picker items. Display keeps
 // the raw ANSI-coloured Nerd-Font-icon-prefixed line so fzf renders it
 // with --ansi; Target is what sesh.Connect needs.
-func buildItems(ctx context.Context, sx *sesh.Client) ([]sources.Item, error) {
+func buildItems(ctx context.Context, sx *sesh.Client, cfg *config.Config, c *cache.Cache) ([]sources.Item, error) {
 	seshItems, err := sx.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]sources.Item, 0, len(seshItems))
+	proj := &sources.Projects{
+		Roots:       cfg.Roots,
+		PruneExtras: cfg.PruneExtras,
+		Cache:       c,
+		Home:        cfg.Home,
+	}
+	projectItems, _ := proj.Items(ctx)
+
+	out := make([]sources.Item, 0, len(projectItems)+len(seshItems))
+	seen := make(map[string]struct{}, len(projectItems)+len(seshItems))
+	add := func(it sources.Item) {
+		key := itemKey(it)
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, it)
+	}
+
+	for _, it := range projectItems {
+		if isBroadProjectRoot(it.Cwd, cfg) {
+			continue
+		}
+		it.Display = " " + it.Display
+		add(it)
+	}
 	for _, si := range seshItems {
-		out = append(out, sources.Item{
+		if skipSeshRow(si, cfg) {
+			continue
+		}
+		add(sources.Item{
 			Mode:       sources.ModeProjects, // not actually projects, but Mode is unused for sesh items
 			Display:    si.Display,
 			ActionKind: sources.ActionAttach,
@@ -201,6 +234,58 @@ func buildItems(ctx context.Context, sx *sesh.Client) ([]sources.Item, error) {
 		})
 	}
 	return out, nil
+}
+
+func itemKey(it sources.Item) string {
+	if it.Cwd != "" {
+		return "cwd:" + it.Cwd
+	}
+	return "target:" + it.Target
+}
+
+func skipSeshRow(it sesh.Item, cfg *config.Config) bool {
+	if it.Source == "zoxide" && it.Path != "" {
+		if isBroadProjectRoot(it.Path, cfg) || isNoisyPath(it.Path, cfg.Home) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBroadProjectRoot(path string, cfg *config.Config) bool {
+	if path == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	if cfg.Home != "" && clean == filepath.Clean(cfg.Home) {
+		return true
+	}
+	for _, root := range cfg.Roots {
+		if clean == filepath.Clean(root) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNoisyPath(path, home string) bool {
+	clean := filepath.Clean(path)
+	if clean == "/" || clean == "/tmp" || clean == "/dev" || clean == "/Users" || clean == "/Volumes" {
+		return true
+	}
+	if home == "" {
+		return false
+	}
+	rel, err := filepath.Rel(home, clean)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	switch rel {
+	case ".claude", ".claude/sessions", ".claude/session-env", ".codex", ".copilot", ".ssh", ".cli-proxy-api", ".mcp-codex-agent-teams", "bin", "music":
+		return true
+	default:
+		return false
+	}
 }
 
 // dispatchAttach is the type-to-create attach path. tmux owns this one

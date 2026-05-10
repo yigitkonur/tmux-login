@@ -76,7 +76,7 @@ func TestParseJSONList(t *testing.T) {
 	}
 	want := []Item{
 		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux", Rank: 0},
-		{Display: "◆ ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide", Rank: 0},
+		{Display: " ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide", Rank: 0},
 		{Display: "◇ work", Target: "work", Path: "/Users/me/work", Source: "config", Rank: 0},
 	}
 	if !reflect.DeepEqual(got, want) {
