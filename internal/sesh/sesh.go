@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -64,6 +67,7 @@ type Item struct {
 	Target  string
 	Path    string
 	Source  string
+	Rank    int64
 }
 
 // List runs `sesh list --json` and parses the output into Items. Older test
@@ -78,6 +82,7 @@ func (c *Client) List(ctx context.Context) ([]Item, error) {
 		return nil, fmt.Errorf("sesh list: %w (stderr=%s)", err, bytes.TrimSpace(stderr.Bytes()))
 	}
 	if items, ok := parseJSONList(stdout.Bytes()); ok {
+		sortItems(items)
 		return items, nil
 	}
 	return parseList(stdout.Bytes()), nil
@@ -110,9 +115,105 @@ func parseJSONList(b []byte) ([]Item, bool) {
 			Target:  target,
 			Path:    row.Path,
 			Source:  row.Src,
+			Rank:    itemRank(row.Src, row.Path, target),
 		})
 	}
 	return out, true
+}
+
+func itemRank(src, path, target string) int64 {
+	if st, err := os.Stat(path); err == nil && st.IsDir() {
+		return st.ModTime().Unix()
+	}
+	if src == "zoxide" {
+		if expanded := expandTilde(target); expanded != target {
+			if st, err := os.Stat(expanded); err == nil && st.IsDir() {
+				return st.ModTime().Unix()
+			}
+		}
+	}
+	return 0
+}
+
+func sortItems(items []Item) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ci, cj := itemClass(items[i]), itemClass(items[j])
+		if ci != cj {
+			return ci < cj
+		}
+		if items[i].Rank != items[j].Rank {
+			return items[i].Rank > items[j].Rank
+		}
+		return strings.ToLower(items[i].Target) < strings.ToLower(items[j].Target)
+	})
+}
+
+func itemClass(it Item) int {
+	path := it.Path
+	if path == "" {
+		path = expandTilde(it.Target)
+	}
+	if isDevChild(path) {
+		return 0
+	}
+	if isBroadRoot(path) {
+		return 2
+	}
+	if isExistingDir(path) {
+		return 1
+	}
+	if it.Source == "tmux" {
+		return 3
+	}
+	return 4
+}
+
+func isDevChild(path string) bool {
+	home := os.Getenv("HOME")
+	if home == "" || path == "" {
+		return false
+	}
+	dev := filepath.Join(home, "dev")
+	rel, err := filepath.Rel(dev, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	return !strings.Contains(rel, string(filepath.Separator))
+}
+
+func isExistingDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+func isBroadRoot(path string) bool {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return false
+	}
+	switch path {
+	case home, filepath.Join(home, "dev"), filepath.Join(home, "code"), filepath.Join(home, "projects"), filepath.Join(home, "work"):
+		return true
+	default:
+		return false
+	}
+}
+
+func expandTilde(path string) string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+	}
+	return path
 }
 
 func displayJSONItem(row jsonItem) string {

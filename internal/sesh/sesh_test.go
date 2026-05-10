@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStripANSI(t *testing.T) {
@@ -73,12 +75,58 @@ func TestParseJSONList(t *testing.T) {
 		t.Fatal("parseJSONList ok=false")
 	}
 	want := []Item{
-		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux"},
-		{Display: "◆ ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide"},
-		{Display: "◇ work", Target: "work", Path: "/Users/me/work", Source: "config"},
+		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux", Rank: 0},
+		{Display: "◆ ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide", Rank: 0},
+		{Display: "◇ work", Target: "work", Path: "/Users/me/work", Source: "config", Rank: 0},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseJSONList:\n got=%+v\n want=%+v", got, want)
+	}
+}
+
+func TestSortItemsDevChildrenByMtime(t *testing.T) {
+	home := t.TempDir()
+	dev := filepath.Join(home, "dev")
+	oldProj := filepath.Join(dev, "old")
+	newProj := filepath.Join(dev, "new")
+	other := filepath.Join(home, ".codex")
+	for _, dir := range []string{oldProj, newProj, other} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Unix(100, 0)
+	newTime := time.Unix(200, 0)
+	if err := os.Chtimes(oldProj, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newProj, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(other, time.Unix(300, 0), time.Unix(300, 0)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	items, ok := parseJSONList([]byte(`[
+		{"Src":"zoxide","Name":"~/.codex","Path":"` + other + `"},
+		{"Src":"zoxide","Name":"~/dev/old","Path":"` + oldProj + `"},
+		{"Src":"tmux","Name":"alpha","Path":""},
+		{"Src":"zoxide","Name":"~/dev","Path":"` + dev + `"},
+		{"Src":"zoxide","Name":"~/dev/new","Path":"` + newProj + `"}
+	]`))
+	if !ok {
+		t.Fatal("parseJSONList ok=false")
+	}
+	sortItems(items)
+
+	got := make([]string, len(items))
+	for i, it := range items {
+		got[i] = it.Target
+	}
+	want := []string{"~/dev/new", "~/dev/old", "~/.codex", "~/dev", "alpha"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("order = %v; want %v", got, want)
 	}
 }
 
