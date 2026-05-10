@@ -62,6 +62,32 @@ func TestParseList(t *testing.T) {
 	}
 }
 
+func TestParseJSONList(t *testing.T) {
+	in := []byte(`[
+		{"Src":"tmux","Name":"alpha","Path":"/dev/alpha","Attached":1,"Windows":2},
+		{"Src":"zoxide","Name":"~/dev/proj","Path":"/Users/me/dev/proj","Score":99},
+		{"Src":"config","Name":"work","Path":"/Users/me/work"}
+	]`)
+	got, ok := parseJSONList(in)
+	if !ok {
+		t.Fatal("parseJSONList ok=false")
+	}
+	want := []Item{
+		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux"},
+		{Display: "◆ ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide"},
+		{Display: "◇ work", Target: "work", Path: "/Users/me/work", Source: "config"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseJSONList:\n got=%+v\n want=%+v", got, want)
+	}
+}
+
+func TestParseJSONListInvalid(t *testing.T) {
+	if _, ok := parseJSONList([]byte("\x1b[34m \x1b[39m alpha\n")); ok {
+		t.Fatal("parseJSONList accepted non-json icon output")
+	}
+}
+
 func TestAvailableViaSeshBin(t *testing.T) {
 	// Point SESH_BIN at /bin/sh — a binary we know exists. Available()
 	// should return true.

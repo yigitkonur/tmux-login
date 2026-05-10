@@ -23,6 +23,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/yigitkonur/tmux-login/internal/cache"
+	"github.com/yigitkonur/tmux-login/internal/config"
 	"github.com/yigitkonur/tmux-login/internal/picker"
 	"github.com/yigitkonur/tmux-login/internal/sesh"
 	"github.com/yigitkonur/tmux-login/internal/sources"
@@ -65,6 +67,7 @@ func emitList(ctx context.Context) error {
 			Display:    si.Display,
 			ActionKind: sources.ActionAttach,
 			Target:     si.Target,
+			Cwd:        si.Path,
 		}))
 	}
 	fmt.Println(strings.Join(out, "\n"))
@@ -97,5 +100,6 @@ func killHighlighted(ctx context.Context, rest []string) error {
 	if err := tx.KillSession(ctx, target); err != nil {
 		fmt.Fprintf(os.Stderr, "tmux-login: kill %q: %v\n", target, err)
 	}
+	cache.New(config.Load().CacheDir).DropSession(target)
 	return nil
 }

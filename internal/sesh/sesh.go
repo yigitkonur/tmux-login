@@ -1,5 +1,5 @@
 // Package sesh wraps the joshmedeski/sesh CLI when it's on PATH. We use sesh
-// as the session-list source ("sesh list --icons") and as the idempotent
+// as the session-list source ("sesh list --json") and as the idempotent
 // attach engine ("sesh connect NAME"). When sesh isn't available, the login
 // flow falls back to internal/sources/sessions + internal/tmux/attach.
 //
@@ -11,6 +11,7 @@ package sesh
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,13 +62,14 @@ func (c *Client) Available() bool {
 type Item struct {
 	Display string
 	Target  string
+	Path    string
+	Source  string
 }
 
-// List runs `sesh list --icons` and parses the output into Items. Errors
-// from the underlying command surface as the second return; callers fall
-// back to the internal sessions source on any error.
+// List runs `sesh list --json` and parses the output into Items. Older test
+// stubs and sesh variants that emit icon lines still work through parseList.
 func (c *Client) List(ctx context.Context) ([]Item, error) {
-	cmd := exec.CommandContext(ctx, c.bin, "list", "--icons")
+	cmd := exec.CommandContext(ctx, c.bin, "list", "--json")
 	cmd.Env = os.Environ()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -75,7 +77,60 @@ func (c *Client) List(ctx context.Context) ([]Item, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("sesh list: %w (stderr=%s)", err, bytes.TrimSpace(stderr.Bytes()))
 	}
+	if items, ok := parseJSONList(stdout.Bytes()); ok {
+		return items, nil
+	}
 	return parseList(stdout.Bytes()), nil
+}
+
+type jsonItem struct {
+	Src      string
+	Name     string
+	Path     string
+	Attached int
+	Windows  int
+}
+
+func parseJSONList(b []byte) ([]Item, bool) {
+	var rows []jsonItem
+	if err := json.Unmarshal(b, &rows); err != nil {
+		return nil, false
+	}
+	out := make([]Item, 0, len(rows))
+	for _, row := range rows {
+		target := row.Name
+		if target == "" {
+			target = row.Path
+		}
+		if target == "" {
+			continue
+		}
+		out = append(out, Item{
+			Display: displayJSONItem(row),
+			Target:  target,
+			Path:    row.Path,
+			Source:  row.Src,
+		})
+	}
+	return out, true
+}
+
+func displayJSONItem(row jsonItem) string {
+	target := row.Name
+	if target == "" {
+		target = row.Path
+	}
+	switch row.Src {
+	case "tmux":
+		if row.Attached > 0 {
+			return "● " + target
+		}
+		return "○ " + target
+	case "zoxide":
+		return "◆ " + target
+	default:
+		return "◇ " + target
+	}
 }
 
 // Connect runs `sesh connect NAME`. When called from outside tmux, sesh

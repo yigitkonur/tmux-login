@@ -46,3 +46,54 @@ func TestRecentDirsFiltersDeleted(t *testing.T) {
 		t.Errorf("RecentDirs should filter non-existent dirs, got %v", got)
 	}
 }
+
+func TestSessionMetadata(t *testing.T) {
+	dir := t.TempDir()
+	c := New(dir)
+	cwd := filepath.Join(dir, "proj")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.RecordAttach("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordCwd("alpha", cwd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "attached", "alpha")); err != nil {
+		t.Fatalf("attached marker missing: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "cwds", "alpha"))
+	if err != nil {
+		t.Fatalf("cwd marker missing: %v", err)
+	}
+	if string(got) != cwd+"\n" {
+		t.Fatalf("cwd marker = %q; want %q", got, cwd+"\n")
+	}
+
+	c.DropSession("alpha")
+	if _, err := os.Stat(filepath.Join(dir, "attached", "alpha")); !os.IsNotExist(err) {
+		t.Fatalf("attached marker still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cwds", "alpha")); !os.IsNotExist(err) {
+		t.Fatalf("cwd marker still present: %v", err)
+	}
+}
+
+func TestSessionMetadataRejectsUnsafeNames(t *testing.T) {
+	dir := t.TempDir()
+	c := New(dir)
+	if err := c.RecordAttach("../bad"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordCwd("bad/name", "/tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "attached")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe attach created metadata dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cwds")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe cwd created metadata dir: %v", err)
+	}
+}

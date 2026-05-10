@@ -86,7 +86,7 @@ func runPick(ctx context.Context, args []string) error {
 	_ = mode    // v0.1 ignores; v0.2 dispatches modes
 	_ = noPopup // v0.1 always inline (popup wrapping is wired in tmux.conf binding)
 
-	return login.Run(ctx)
+	return login.RunPicker(ctx, config.Load(), *mode)
 }
 
 func runAttach(ctx context.Context, args []string) error {
@@ -112,11 +112,13 @@ func runAttach(ctx context.Context, args []string) error {
 	tx := tmux.New()
 
 	spec := tmux.AttachSpec{Name: name, Cwd: *cwd, Detach: *detach}
+	_ = c.RecordAttach(name)
+	if *cwd != "" {
+		_ = c.RecordCwd(name, *cwd)
+		_ = c.RecordRecentDir(*cwd)
+	}
 	if err := tx.Attach(ctx, spec); err != nil {
 		return err
-	}
-	if *cwd != "" {
-		_ = c.RecordRecentDir(*cwd)
 	}
 	return nil
 }

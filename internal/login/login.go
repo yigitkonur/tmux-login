@@ -36,6 +36,12 @@ func Run(ctx context.Context) error {
 	if tmux.InsideTmux() {
 		return nil
 	}
+	return RunPicker(ctx, cfg, "login")
+}
+
+// RunPicker runs the actual picker body. Unlike Run, it is valid inside tmux
+// and is used by the M-s popup path.
+func RunPicker(ctx context.Context, cfg *config.Config, modeLabel string) error {
 	if err := cfg.EnsureDirs(); err != nil {
 		fmt.Fprintf(os.Stderr, "tmux-login: %v\n", err)
 		return nil
@@ -78,7 +84,7 @@ func Run(ctx context.Context) error {
 		),
 	}
 
-	header := picker.HeaderFor("login", "enter=attach/create  c-k=kill (in place)  esc=plain shell")
+	header := picker.HeaderFor(modeLabel, "enter=attach/create  c-k=kill (in place)  esc=plain shell")
 	r, err := picker.Pick(ctx, picker.Spec{
 		Prompt:     "tmux session > ",
 		Header:     header,
@@ -103,6 +109,14 @@ func Run(ctx context.Context) error {
 		return nil
 
 	case parsed.OK && parsed.Action == "attach":
+		if tx.HasSession(ctx, parsed.Target) {
+			spec := tmux.AttachSpec{Name: parsed.Target, Cwd: parsed.Cwd}
+			if err := dispatchAttach(ctx, tx, c, spec); err != nil {
+				fmt.Fprintf(os.Stderr, "tmux-login: attach: %v\n", err)
+			}
+			return nil
+		}
+		recordSessionMetadata(c, parsed.Target, parsed.Cwd)
 		if err := sx.Connect(ctx, parsed.Target); err != nil {
 			fmt.Fprintf(os.Stderr, "tmux-login: sesh connect: %v\n", err)
 		}
@@ -183,6 +197,7 @@ func buildItems(ctx context.Context, sx *sesh.Client) ([]sources.Item, error) {
 			Display:    si.Display,
 			ActionKind: sources.ActionAttach,
 			Target:     si.Target,
+			Cwd:        si.Path,
 		})
 	}
 	return out, nil
@@ -192,11 +207,17 @@ func buildItems(ctx context.Context, sx *sesh.Client) ([]sources.Item, error) {
 // because sesh's connect can't take an explicit cwd flag. Records the
 // chosen dir in the MRU file so the next dir picker sorts it to the top.
 func dispatchAttach(ctx context.Context, tx *tmux.Client, c *cache.Cache, spec tmux.AttachSpec) error {
+	recordSessionMetadata(c, spec.Name, spec.Cwd)
 	if err := tx.Attach(ctx, spec); err != nil && !errors.Is(err, os.ErrInvalid) {
 		return err
 	}
-	if spec.Cwd != "" {
-		_ = c.RecordRecentDir(spec.Cwd)
-	}
 	return nil
+}
+
+func recordSessionMetadata(c *cache.Cache, name, cwd string) {
+	_ = c.RecordAttach(name)
+	if cwd != "" {
+		_ = c.RecordCwd(name, cwd)
+		_ = c.RecordRecentDir(cwd)
+	}
 }

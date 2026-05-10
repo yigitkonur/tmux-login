@@ -1,8 +1,5 @@
 // Package cache owns the on-disk MRU list of recently-attached project
-// directories at $XDG_CACHE_HOME/tmux-login/recent_dirs. With sesh as the
-// session engine, sesh + zoxide handle session-state caching; we only
-// keep the recent-dirs file because it feeds the type-to-create dir
-// picker, which sesh has no equivalent for.
+// directories and per-session attach metadata at $XDG_CACHE_HOME/tmux-login.
 //
 // Writes are atomic via temp+rename so concurrent SSH logins can't
 // corrupt the destination.
@@ -14,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const maxRecent = 50
@@ -24,6 +22,58 @@ type Cache struct {
 
 func New(root string) *Cache {
 	return &Cache{Root: root}
+}
+
+func safeName(name string) (string, bool) {
+	if name == "" || name == "." || name == ".." {
+		return "", false
+	}
+	if strings.ContainsAny(name, `/`+"\x00") {
+		return "", false
+	}
+	return name, true
+}
+
+// RecordAttach updates the session's last-attached marker. Call before attach
+// paths that may exec so successful outside-tmux attaches still persist recency.
+func (c *Cache) RecordAttach(name string) error {
+	name, ok := safeName(name)
+	if !ok {
+		return nil
+	}
+	dir := filepath.Join(c.Root, "attached")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	file := filepath.Join(dir, name)
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// RecordCwd stores the starting directory for sessions this tool creates.
+func (c *Cache) RecordCwd(name, cwd string) error {
+	name, ok := safeName(name)
+	if !ok || cwd == "" {
+		return nil
+	}
+	dir := filepath.Join(c.Root, "cwds")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, name), []byte(cwd+"\n"), 0o644)
+}
+
+// DropSession removes best-effort metadata for a killed session.
+func (c *Cache) DropSession(name string) {
+	name, ok := safeName(name)
+	if !ok {
+		return
+	}
+	_ = os.Remove(filepath.Join(c.Root, "attached", name))
+	_ = os.Remove(filepath.Join(c.Root, "cwds", name))
 }
 
 // RecordRecentDir prepends path to recent_dirs, dedup'd, capped at 50.

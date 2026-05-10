@@ -265,11 +265,31 @@ case_inside_tmux_short_circuit() {
   teardown
 }
 
+# --- 7b. pick works inside tmux ---------------------------------------------
+case_pick_inside_tmux_runs_picker() {
+  setup
+  TMUX="/private/tmp/tmux-501/default,12345,0" export TMUX
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  printf '\x1b[34m \x1b[39m alpha\n' > "$MOCK_SESH_LIST"
+  export MOCK_SESH_LIST
+
+  printf '\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" pick --no-popup
+
+  assert_argv_line_has "$RUN_LOG" "sesh list --json" || return 1
+  [ -s "$FZF_STDIN_DIR/1" ] || { echo "fzf did not receive picker lines"; return 1; }
+  teardown
+}
+
 # --- 8. attach subcommand respects --cwd -----------------------------------
 case_attach_with_cwd() {
   setup
   "$BIN" attach --cwd /tmp/x --detach myproj
   assert_argv_line_has "$RUN_LOG" "new-session -d -s myproj -c /tmp/x" || return 1
+  [ -f "$XDG_CACHE_HOME/tmux-login/attached/myproj" ] || { echo "attached marker missing"; return 1; }
+  grep -Fxq "/tmp/x" "$XDG_CACHE_HOME/tmux-login/cwds/myproj" || { echo "cwd marker missing"; return 1; }
   teardown
 }
 
@@ -346,7 +366,7 @@ case_sesh_engine_attach_existing() {
   "$BIN" login
 
   # Must call sesh list first, then sesh connect alpha.
-  assert_argv_line_has "$RUN_LOG" "sesh list --icons" || return 1
+  assert_argv_line_has "$RUN_LOG" "sesh list --json" || return 1
   assert_argv_line_has "$RUN_LOG" "sesh connect alpha" || return 1
   # MUST NOT fall back to tmux new-session.
   if grep -F "tmux new-session" "$RUN_LOG" >/dev/null 2>&1; then
@@ -472,6 +492,7 @@ run_case "dash-prefixed-name"               case_dash_prefixed_name
 run_case "esc-with-query (no create)"       case_esc_with_query
 run_case "TMUX_LOGIN_SKIP=1 short-circuit"  case_skip_short_circuit
 run_case "inside-tmux short-circuit"        case_inside_tmux_short_circuit
+run_case "pick inside tmux runs picker"     case_pick_inside_tmux_runs_picker
 run_case "attach --cwd --detach"            case_attach_with_cwd
 run_case "doctor output shape"              case_doctor_shape
 run_case "install-hooks --dry-run"          case_install_hooks_dry_run
