@@ -63,11 +63,12 @@ func (c *Client) Available() bool {
 // ANSI-coloured and icon-prefixed; pass it straight to fzf with --ansi.
 // Target is the bare name/path that `sesh connect` accepts.
 type Item struct {
-	Display string
-	Target  string
-	Path    string
-	Source  string
-	Rank    int64
+	Display  string
+	Target   string
+	Path     string
+	Source   string
+	Rank     int64
+	Attached int
 }
 
 // List runs `sesh list --json` and parses the output into Items. Older test
@@ -111,11 +112,12 @@ func parseJSONList(b []byte) ([]Item, bool) {
 			continue
 		}
 		out = append(out, Item{
-			Display: displayJSONItem(row),
-			Target:  target,
-			Path:    row.Path,
-			Source:  row.Src,
-			Rank:    itemRank(row.Src, row.Path, target),
+			Display:  displayJSONItem(row),
+			Target:   target,
+			Path:     row.Path,
+			Source:   row.Src,
+			Rank:     itemRank(row.Src, row.Path, target),
+			Attached: row.Attached,
 		})
 	}
 	return out, true
@@ -149,23 +151,26 @@ func sortItems(items []Item) {
 }
 
 func itemClass(it Item) int {
+	if it.Source == "tmux" {
+		if it.Attached > 0 {
+			return 0
+		}
+		return 1
+	}
 	path := it.Path
 	if path == "" {
 		path = expandTilde(it.Target)
 	}
 	if isDevChild(path) {
-		return 0
-	}
-	if isBroadRoot(path) {
 		return 2
 	}
-	if isExistingDir(path) {
-		return 1
+	if isBroadRoot(path) {
+		return 4
 	}
-	if it.Source == "tmux" {
+	if isExistingDir(path) {
 		return 3
 	}
-	return 4
+	return 5
 }
 
 func isDevChild(path string) bool {

@@ -75,7 +75,7 @@ func TestParseJSONList(t *testing.T) {
 		t.Fatal("parseJSONList ok=false")
 	}
 	want := []Item{
-		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux", Rank: 0},
+		{Display: "● alpha", Target: "alpha", Path: "/dev/alpha", Source: "tmux", Rank: 0, Attached: 1},
 		{Display: " ~/dev/proj", Target: "~/dev/proj", Path: "/Users/me/dev/proj", Source: "zoxide", Rank: 0},
 		{Display: "◇ work", Target: "work", Path: "/Users/me/work", Source: "config", Rank: 0},
 	}
@@ -124,7 +124,7 @@ func TestSortItemsDevChildrenByMtime(t *testing.T) {
 	for i, it := range items {
 		got[i] = it.Target
 	}
-	want := []string{"~/dev/new", "~/dev/old", "~/.codex", "~/dev", "alpha"}
+	want := []string{"alpha", "~/dev/new", "~/dev/old", "~/.codex", "~/dev"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("order = %v; want %v", got, want)
 	}

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/yigitkonur/tmux-login/internal/cache"
@@ -214,6 +215,33 @@ func buildItems(ctx context.Context, sx *sesh.Client, cfg *config.Config, c *cac
 		out = append(out, it)
 	}
 
+	tmuxItems := make([]sesh.Item, 0, len(seshItems))
+	otherSeshItems := make([]sesh.Item, 0, len(seshItems))
+	for _, si := range seshItems {
+		if si.Source == "tmux" {
+			tmuxItems = append(tmuxItems, si)
+			continue
+		}
+		otherSeshItems = append(otherSeshItems, si)
+	}
+	sort.SliceStable(tmuxItems, func(i, j int) bool {
+		if tmuxItems[i].Attached != tmuxItems[j].Attached {
+			return tmuxItems[i].Attached > tmuxItems[j].Attached
+		}
+		if tmuxItems[i].Rank != tmuxItems[j].Rank {
+			return tmuxItems[i].Rank > tmuxItems[j].Rank
+		}
+		return strings.ToLower(tmuxItems[i].Target) < strings.ToLower(tmuxItems[j].Target)
+	})
+
+	for _, si := range tmuxItems {
+		add(sources.Item{
+			Mode:       sources.ModeProjects,
+			Display:    si.Display,
+			ActionKind: sources.ActionAttach,
+			Target:     si.Target,
+		})
+	}
 	for _, it := range projectItems {
 		if isBroadProjectRoot(it.Cwd, cfg) {
 			continue
@@ -221,7 +249,7 @@ func buildItems(ctx context.Context, sx *sesh.Client, cfg *config.Config, c *cac
 		it.Display = " " + it.Display
 		add(it)
 	}
-	for _, si := range seshItems {
+	for _, si := range otherSeshItems {
 		if skipSeshRow(si, cfg) {
 			continue
 		}

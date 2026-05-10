@@ -454,6 +454,77 @@ case_local_dev_projects_in_login_picker() {
   teardown
 }
 
+# --- 15d. live tmux sessions render before project rows ----------------------
+case_live_sessions_before_projects() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  TMUX_LOGIN_ROOTS="$tmp/dev"
+  export SESH_BIN MOCK_SESH_LIST TMUX_LOGIN_ROOTS
+
+  mkdir -p "$tmp/dev/alpha"
+  printf '[{"Src":"tmux","Name":"live","Path":"%s","Attached":0,"Windows":1}]\n' "$tmp/dev/live" > "$MOCK_SESH_LIST"
+  printf '\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  second=$(sed -n '2p' "$FZF_STDIN_DIR/1")
+  third=$(sed -n '3p' "$FZF_STDIN_DIR/1")
+  echo "$second" | grep -Fq "live" || { echo "live session was not first after skip"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  echo "$third" | grep -Fq " ~/dev/alpha" || { echo "project row did not follow live session"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  teardown
+}
+
+# --- 15e. attached tmux sessions render before detached sessions -------------
+case_attached_sessions_before_detached() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  export SESH_BIN MOCK_SESH_LIST
+
+  printf '[{"Src":"tmux","Name":"detached","Path":"","Attached":0,"Windows":1},{"Src":"tmux","Name":"attached","Path":"","Attached":1,"Windows":1}]\n' > "$MOCK_SESH_LIST"
+  printf '\nskip\x1f\x1f\t[ skip · plain shell ]\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  second=$(sed -n '2p' "$FZF_STDIN_DIR/1")
+  third=$(sed -n '3p' "$FZF_STDIN_DIR/1")
+  echo "$second" | grep -Fq "attached" || { echo "attached session was not first"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  echo "$third" | grep -Fq "detached" || { echo "detached session was not second"; cat "$FZF_STDIN_DIR/1"; return 1; }
+  teardown
+}
+
+# --- 15f. live tmux rows do not force cwd on existing sessions ---------------
+case_live_session_attach_preserves_pane() {
+  setup
+  SESH_BIN="$shimdir/sesh"
+  MOCK_SESH_LIST="$tmp/sesh.list"
+  MOCK_TMUX_HAS_SESSIONS="live"
+  export SESH_BIN MOCK_SESH_LIST MOCK_TMUX_HAS_SESSIONS
+
+  printf '[{"Src":"tmux","Name":"live","Path":"%s","Attached":0,"Windows":1}]\n' "$tmp/dev/live" > "$MOCK_SESH_LIST"
+  printf '\nattach\x1flive\x1f\t○ live\n' > "$FZF_OUTPUTS_DIR/1"
+  echo 0 > "$FZF_RC_DIR/1"
+
+  "$BIN" login
+
+  assert_argv_line_has "$RUN_LOG" "tmux attach -t =live" || return 1
+  if grep -F "send-keys" "$RUN_LOG" >/dev/null 2>&1; then
+    echo "live session row must not send cd into an existing pane"
+    cat "$RUN_LOG" >&2
+    return 1
+  fi
+  teardown
+}
+
+# --- 15g. managed tmux config keeps detached sessions alive ------------------
+case_persistence_options_in_tmux_conf() {
+  grep -Fq "set -g destroy-unattached off" "$REPO/share/tmux.conf" || { echo "destroy-unattached persistence option missing"; return 1; }
+  grep -Fq "set -g exit-unattached off" "$REPO/share/tmux.conf" || { echo "exit-unattached persistence option missing"; return 1; }
+}
+
 # --- 16. _action --kill on a real session calls tmux kill-session ----------
 # (replaces the older case_sesh_engine_ctrlx_kill that drove a stubbed fzf
 # --expect=ctrl-x flow; the bind path runs the kill via execute-silent in
@@ -551,6 +622,10 @@ run_case "sesh-engine attach existing"      case_sesh_engine_attach_existing
 run_case "sesh-engine type-to-create"       case_sesh_engine_type_to_create
 run_case "project existing locks cwd"       case_project_existing_session_locks_cwd
 run_case "local dev projects in picker"     case_local_dev_projects_in_login_picker
+run_case "live sessions before projects"    case_live_sessions_before_projects
+run_case "attached before detached"         case_attached_sessions_before_detached
+run_case "live attach preserves pane"       case_live_session_attach_preserves_pane
+run_case "tmux persistence options"         case_persistence_options_in_tmux_conf
 run_case "tmux-login last subcommand"       case_last_subcommand
 
 echo "test/runtime.sh: $PASS passed, $FAIL failed"
